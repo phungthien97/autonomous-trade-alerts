@@ -5,5 +5,15 @@
   "sell_drop_pct": 1.5,
   "x_days": 20,
   "reopt_days": 5,
-  "alerts_enabled": true
+  "alerts_enabled": true,
+  "assets": [
+    {
+      "symbol": "ZSP.TO",
+      "buy_rise_pct": 1.0,
+      "sell_drop_pct": 1.5,
+      "x_days": 20,
+      "reopt_days": 5,
+      "enabled": true
+    }
+  ]
 }
