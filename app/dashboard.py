@@ -12,8 +12,12 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from app.data import download_hourly, hourly_limit_start_date
-from app.strategy import optimize_params
+try:
+    from app.data import download_hourly, hourly_limit_start_date
+    from app.strategy import optimize_params
+except ModuleNotFoundError:
+    from data import download_hourly, hourly_limit_start_date
+    from strategy import optimize_params
 
 
 ROOT = Path(__file__).resolve().parents[1]
