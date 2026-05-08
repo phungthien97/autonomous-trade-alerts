@@ -131,7 +131,8 @@ def run_once() -> None:
     if "assets" not in state or not isinstance(state.get("assets"), dict):
         state["assets"] = {}
 
-    per_asset_initial = float(config["initial_cash"]) / max(len(enabled_assets), 1)
+    # initial_cash is interpreted as per-asset starting capital.
+    per_asset_initial = float(config["initial_cash"])
     end = (now_utc.date() + timedelta(days=1)).isoformat()
     start = max(datetime.strptime(hourly_limit_start_date(), "%Y-%m-%d").date(), now_utc.date() - timedelta(days=7))
 

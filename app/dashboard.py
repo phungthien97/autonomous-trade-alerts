@@ -166,6 +166,15 @@ def notify(ok: bool, msg: str) -> None:
     st.session_state["dashboard_notice"] = {"ok": bool(ok), "msg": str(msg)}
 
 
+def normalize_symbol(raw_value: object, default_suffix: str = "") -> str:
+    symbol = str(raw_value or "").strip().upper()
+    if symbol in {"", "NONE", "NAN"}:
+        return ""
+    if "." not in symbol and default_suffix:
+        return f"{symbol}{default_suffix}"
+    return symbol
+
+
 def render_notice() -> None:
     notice = st.session_state.get("dashboard_notice")
     if not notice:
@@ -242,6 +251,7 @@ def main() -> None:
     with bot_tab:
         st.subheader("Bot Controls")
         st.caption("Use this page to configure automated signal checks and trigger runs.")
+        st.caption("Ticker format uses Yahoo symbols (example: `ZSP.TO`, `AAPL`, `MSFT`).")
         assets_df = pd.DataFrame(strategy_assets)
         edited_assets = st.data_editor(
             assets_df,
@@ -259,17 +269,21 @@ def main() -> None:
         )
         with st.form("config_form"):
             initial_cash = st.number_input(
-                "Total strategy initial cash",
+                "Initial cash per asset",
                 min_value=100.0,
                 value=float(config.get("initial_cash", 1000.0)),
                 step=100.0,
-                help="Worker splits this across enabled assets for new positions.",
+                help="Each enabled asset starts with this same amount.",
             )
             alerts_enabled = st.checkbox("Email alerts enabled", value=bool(config.get("alerts_enabled", True)))
             save = st.form_submit_button("Save bot settings")
             if save:
                 clean_assets = edited_assets.copy()
-                clean_assets["symbol"] = clean_assets["symbol"].astype(str).str.upper().str.strip()
+                default_suffix = ""
+                base_symbol = str(config.get("symbol", "")).strip().upper()
+                if "." in base_symbol:
+                    default_suffix = "." + base_symbol.split(".", 1)[1]
+                clean_assets["symbol"] = clean_assets["symbol"].apply(lambda v: normalize_symbol(v, default_suffix=default_suffix))
                 clean_assets = clean_assets[clean_assets["symbol"] != ""]
                 clean_assets["buy_rise_pct"] = pd.to_numeric(clean_assets["buy_rise_pct"], errors="coerce").fillna(1.0)
                 clean_assets["sell_drop_pct"] = pd.to_numeric(clean_assets["sell_drop_pct"], errors="coerce").fillna(1.5)
@@ -342,7 +356,7 @@ def main() -> None:
         )
         if st.button("Save portfolio"):
             clean_df = edited_positions.copy()
-            clean_df["symbol"] = clean_df["symbol"].astype(str).str.upper().str.strip()
+            clean_df["symbol"] = clean_df["symbol"].apply(normalize_symbol)
             clean_df = clean_df[clean_df["symbol"] != ""]
             clean_df["shares"] = pd.to_numeric(clean_df["shares"], errors="coerce").fillna(0.0)
             clean_df["price"] = pd.to_numeric(clean_df["price"], errors="coerce").fillna(0.0)
@@ -418,7 +432,7 @@ def main() -> None:
             **Important behavior**
             - The bot and manual portfolio tracker are separate so you can compare model vs real holdings.
             - Automated worker supports multiple enabled assets from the bot table.
-            - New bot assets receive equal initial-cash allocation from total strategy initial cash.
+            - Every enabled bot asset uses the same initial cash amount (per-asset setting).
             """
         )
 
