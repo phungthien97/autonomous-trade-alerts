@@ -1,0 +1,2 @@
+symbol,initial_cash,reopt_days,best_x_days_from_2024,final_value_2025_walkforward,return_pct_2025_walkforward,buy_hold_value_2025,buy_hold_return_pct_2025,trade_event_rows_2025,param_blocks_2025
+ZSP.TO,1000.0,5,20,1133.8154792678224,13.381547926782233,1101.9812059552887,10.19812059552887,37,51

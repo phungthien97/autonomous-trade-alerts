@@ -1,0 +1,9 @@
+{
+  "symbol": "ZSP.TO",
+  "initial_cash": 1000.0,
+  "buy_rise_pct": 1.0,
+  "sell_drop_pct": 1.5,
+  "x_days": 20,
+  "reopt_days": 5,
+  "alerts_enabled": true
+}
