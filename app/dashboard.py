@@ -98,6 +98,28 @@ def trigger_workflow() -> tuple[bool, str]:
 def main() -> None:
     st.set_page_config(page_title="Trade Signal Dashboard", layout="wide")
     st.title("Autonomous Buy/Sell Signal Dashboard")
+    with st.expander("How to use this dashboard", expanded=True):
+        st.markdown(
+            """
+            1. Confirm the **Last Run** time is updating. This means the GitHub Actions worker is running.
+            2. Review **Last Action** and **Portfolio Value** to see the latest strategy state.
+            3. Update values in **Config** and click **Save settings** when you want to change behavior.
+            4. Use **Run check now** to trigger an immediate worker run from this dashboard.
+            5. Check **Equity Curve**, **Recent Trades**, and **Recent Re-optimizations** for performance and activity.
+
+            **Config fields**
+            - **Ticker**: Market symbol to track (example: `ZSP.TO`).
+            - **Buy rise %**: Buy signal threshold from trough.
+            - **Sell drop %**: Sell signal threshold from peak.
+            - **Trailing x days for re-optimization**: Lookback window used when recalculating thresholds.
+            - **Re-optimize every N days**: How often thresholds are recomputed.
+            - **Email alerts enabled**: Turns email notifications on/off for signals.
+
+            **Notes**
+            - This app sends alert signals; it does not place broker orders.
+            - State is stored in `state/` files and updated by the worker.
+            """
+        )
 
     config = read_json(CONFIG_PATH)
     state = read_json(STATE_PATH)
