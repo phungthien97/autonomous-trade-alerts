@@ -58,16 +58,7 @@ def _normalize_assets(config: dict) -> list[dict]:
             )
         if normalized:
             return normalized
-    return [
-        {
-            "symbol": str(config["symbol"]).upper(),
-            "buy_rise_pct": float(config["buy_rise_pct"]),
-            "sell_drop_pct": float(config["sell_drop_pct"]),
-            "x_days": int(config["x_days"]),
-            "reopt_days": int(config["reopt_days"]),
-            "enabled": True,
-        }
-    ]
+    return []
 
 
 def _reoptimize_if_due(asset_cfg: dict, asset_state: dict, initial_cash: float, now_utc: datetime) -> tuple[float, float, bool]:

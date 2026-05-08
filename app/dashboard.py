@@ -5,12 +5,15 @@ import json
 import os
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from app.data import download_hourly, hourly_limit_start_date
+from app.strategy import optimize_params
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -139,16 +142,7 @@ def normalize_assets_from_config(config: dict) -> list[dict]:
             )
         if out:
             return out
-    return [
-        {
-            "symbol": str(config.get("symbol", "")).strip().upper(),
-            "buy_rise_pct": float(config.get("buy_rise_pct", 1.0)),
-            "sell_drop_pct": float(config.get("sell_drop_pct", 1.5)),
-            "x_days": int(config.get("x_days", 20)),
-            "reopt_days": int(config.get("reopt_days", 5)),
-            "enabled": True,
-        }
-    ]
+    return []
 
 
 def format_timestamp_in_timezone(raw_timestamp: str | None, tz_name: str) -> str:
@@ -189,6 +183,61 @@ def render_notice() -> None:
         if st.button("Dismiss", key="dismiss_dashboard_notice"):
             st.session_state.pop("dashboard_notice", None)
             st.rerun()
+
+
+def initialize_asset_params(assets_df: pd.DataFrame, initial_cash: float) -> tuple[pd.DataFrame, list[str]]:
+    """Fill missing per-asset params using trailing 1Y hourly data."""
+    if assets_df.empty:
+        return assets_df, []
+
+    out = assets_df.copy()
+    notes: list[str] = []
+    now_utc = datetime.now(timezone.utc)
+    start_date = max(
+        datetime.strptime(hourly_limit_start_date(), "%Y-%m-%d").date(),
+        (now_utc - timedelta(days=365)).date(),
+    )
+    end_date = (now_utc.date() + timedelta(days=1)).isoformat()
+
+    for idx, row in out.iterrows():
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if not symbol:
+            continue
+
+        buy_missing = pd.isna(row.get("buy_rise_pct")) or float(row.get("buy_rise_pct", 0.0) or 0.0) <= 0
+        sell_missing = pd.isna(row.get("sell_drop_pct")) or float(row.get("sell_drop_pct", 0.0) or 0.0) <= 0
+        x_missing = pd.isna(row.get("x_days")) or int(row.get("x_days", 0) or 0) <= 0
+        reopt_missing = pd.isna(row.get("reopt_days")) or int(row.get("reopt_days", 0) or 0) <= 0
+        if not (buy_missing or sell_missing or x_missing or reopt_missing):
+            continue
+
+        try:
+            hist = download_hourly(symbol=symbol, start=str(start_date), end=end_date)
+            prices = hist["Close"].astype(float).to_numpy()
+            if len(prices) < 2:
+                raise RuntimeError("insufficient hourly candles")
+            best_buy, best_sell, _ = optimize_params(train_prices=prices, initial_cash=float(initial_cash))
+            if buy_missing:
+                out.at[idx, "buy_rise_pct"] = round(best_buy * 100.0, 3)
+            if sell_missing:
+                out.at[idx, "sell_drop_pct"] = round(best_sell * 100.0, 3)
+            if x_missing:
+                out.at[idx, "x_days"] = 20
+            if reopt_missing:
+                out.at[idx, "reopt_days"] = 5
+            notes.append(f"{symbol}: initialized params from 1Y hourly data")
+        except Exception as exc:  # noqa: BLE001
+            if buy_missing:
+                out.at[idx, "buy_rise_pct"] = 1.0
+            if sell_missing:
+                out.at[idx, "sell_drop_pct"] = 1.5
+            if x_missing:
+                out.at[idx, "x_days"] = 20
+            if reopt_missing:
+                out.at[idx, "reopt_days"] = 5
+            notes.append(f"{symbol}: using defaults (data init failed: {exc})")
+
+    return out, notes
 
 
 def main() -> None:
@@ -252,7 +301,7 @@ def main() -> None:
         st.subheader("Bot Controls")
         st.caption("Use this page to configure automated signal checks and trigger runs.")
         st.caption("Ticker format uses Yahoo symbols (example: `ZSP.TO`, `AAPL`, `MSFT`).")
-        assets_df = pd.DataFrame(strategy_assets)
+        assets_df = pd.DataFrame(strategy_assets, columns=["symbol", "buy_rise_pct", "sell_drop_pct", "x_days", "reopt_days", "enabled"])
         edited_assets = st.data_editor(
             assets_df,
             num_rows="dynamic",
@@ -295,6 +344,10 @@ def main() -> None:
                 if clean_assets.empty:
                     notify(False, "Add at least one asset before saving.")
                 else:
+                    with st.spinner("Initializing missing parameters from 1Y hourly data..."):
+                        clean_assets, init_notes = initialize_asset_params(clean_assets, initial_cash=float(initial_cash))
+                    for note in init_notes:
+                        st.caption(note)
                     primary = clean_assets.iloc[0]
                     config.update(
                         {
@@ -316,20 +369,20 @@ def main() -> None:
             ok, msg = trigger_workflow()
             notify(ok, msg)
 
-        st.subheader("Manual Strategy State Override")
-        st.caption("Only use this if strategy state is out of sync and needs correction.")
-        with st.form("strategy_state_form"):
-            state_cash = st.number_input("Strategy Cash", min_value=0.0, value=float(state.get("cash", 0.0)), step=100.0)
-            state_shares = st.number_input("Strategy Shares", min_value=0.0, value=float(state.get("shares", 0.0)), step=0.1)
-            state_price = st.number_input("Last Price", min_value=0.0, value=float(state.get("last_price", 0.0)), step=0.01)
-            override = st.form_submit_button("Apply strategy override")
-            if override:
-                state["cash"] = float(state_cash)
-                state["shares"] = float(state_shares)
-                state["last_price"] = float(state_price)
-                write_json(STATE_PATH, state)
-                ok, msg = commit_file_to_github(STATE_PATH, "Update strategy state from dashboard")
-                notify(ok, msg)
+        st.subheader("Per-asset Monitor")
+        if strategy_assets:
+            monitor_symbols = [str(a.get("symbol", "")).upper() for a in strategy_assets if str(a.get("symbol", "")).strip()]
+            selected_symbol = st.selectbox("Select asset", options=monitor_symbols, key="monitor_symbol")
+            selected_cfg = next((a for a in strategy_assets if str(a.get("symbol", "")).upper() == selected_symbol), {})
+            asset_state = state.get("assets", {}).get(selected_symbol, {})
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Buy rise %", f"{float(selected_cfg.get('buy_rise_pct', 0.0)):.3f}")
+            m2.metric("Sell drop %", f"{float(selected_cfg.get('sell_drop_pct', 0.0)):.3f}")
+            m3.metric("x days", str(int(selected_cfg.get("x_days", 0))))
+            m4.metric("reopt every N days", str(int(selected_cfg.get("reopt_days", 0))))
+            st.caption(f"Last action: {asset_state.get('last_action', 'N/A')} | Last price: {asset_state.get('last_price', 'N/A')}")
+        else:
+            st.info("No bot assets configured yet. Add symbols above and save to initialize parameters.")
 
     with portfolio_tab:
         st.subheader("Portfolio Manager")
