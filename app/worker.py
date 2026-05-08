@@ -38,18 +38,49 @@ def _append_csv(path: Path, row: dict) -> None:
     out.to_csv(path, index=False)
 
 
-def _reoptimize_if_due(config: dict, state: dict, now_utc: datetime) -> tuple[float, float, bool]:
-    reopt_days = int(config["reopt_days"])
-    x_days = int(config["x_days"])
-    symbol = config["symbol"]
+def _normalize_assets(config: dict) -> list[dict]:
+    assets = config.get("assets")
+    if isinstance(assets, list) and assets:
+        normalized = []
+        for asset in assets:
+            symbol = str(asset.get("symbol", "")).strip().upper()
+            if not symbol:
+                continue
+            normalized.append(
+                {
+                    "symbol": symbol,
+                    "buy_rise_pct": float(asset.get("buy_rise_pct", config.get("buy_rise_pct", 1.0))),
+                    "sell_drop_pct": float(asset.get("sell_drop_pct", config.get("sell_drop_pct", 1.5))),
+                    "x_days": int(asset.get("x_days", config.get("x_days", 20))),
+                    "reopt_days": int(asset.get("reopt_days", config.get("reopt_days", 5))),
+                    "enabled": bool(asset.get("enabled", True)),
+                }
+            )
+        if normalized:
+            return normalized
+    return [
+        {
+            "symbol": str(config["symbol"]).upper(),
+            "buy_rise_pct": float(config["buy_rise_pct"]),
+            "sell_drop_pct": float(config["sell_drop_pct"]),
+            "x_days": int(config["x_days"]),
+            "reopt_days": int(config["reopt_days"]),
+            "enabled": True,
+        }
+    ]
 
-    last_reopt = state.get("last_reopt_at")
+
+def _reoptimize_if_due(asset_cfg: dict, asset_state: dict, initial_cash: float, now_utc: datetime) -> tuple[float, float, bool]:
+    reopt_days = int(asset_cfg["reopt_days"])
+    x_days = int(asset_cfg["x_days"])
+    symbol = asset_cfg["symbol"]
+    last_reopt = asset_state.get("last_reopt_at")
     due = True
     if last_reopt:
         due = (now_utc - datetime.fromisoformat(last_reopt.replace("Z", "+00:00"))) >= timedelta(days=reopt_days)
 
-    buy_rise = float(config["buy_rise_pct"]) / 100.0
-    sell_drop = float(config["sell_drop_pct"]) / 100.0
+    buy_rise = float(asset_cfg["buy_rise_pct"]) / 100.0
+    sell_drop = float(asset_cfg["sell_drop_pct"]) / 100.0
     if not due:
         return buy_rise, sell_drop, False
 
@@ -69,19 +100,19 @@ def _reoptimize_if_due(config: dict, state: dict, now_utc: datetime) -> tuple[fl
 
     best_buy, best_sell, train_final = optimize_params(
         train_prices=train_prices,
-        initial_cash=float(config["initial_cash"]),
+        initial_cash=initial_cash,
     )
-    config["buy_rise_pct"] = round(best_buy * 100.0, 3)
-    config["sell_drop_pct"] = round(best_sell * 100.0, 3)
-    state["last_reopt_at"] = now_utc.isoformat().replace("+00:00", "Z")
+    asset_cfg["buy_rise_pct"] = round(best_buy * 100.0, 3)
+    asset_cfg["sell_drop_pct"] = round(best_sell * 100.0, 3)
+    asset_state["last_reopt_at"] = now_utc.isoformat().replace("+00:00", "Z")
     _append_csv(
         PARAMS_PATH,
         {
-            "Datetime": state["last_reopt_at"],
+            "Datetime": asset_state["last_reopt_at"],
             "symbol": symbol,
             "x_days": x_days,
-            "buy_rise_pct": config["buy_rise_pct"],
-            "sell_drop_pct": config["sell_drop_pct"],
+            "buy_rise_pct": asset_cfg["buy_rise_pct"],
+            "sell_drop_pct": asset_cfg["sell_drop_pct"],
             "train_final_value": train_final,
         },
     )
@@ -92,110 +123,163 @@ def run_once() -> None:
     now_utc = datetime.now(timezone.utc)
     config = _read_json(CONFIG_PATH)
     state = _read_json(STATE_PATH)
+    assets = _normalize_assets(config)
+    enabled_assets = [a for a in assets if a.get("enabled", True)]
+    if not enabled_assets:
+        raise RuntimeError("No enabled assets configured.")
 
-    symbol = config["symbol"]
-    initial_cash = float(config["initial_cash"])
+    if "assets" not in state or not isinstance(state.get("assets"), dict):
+        state["assets"] = {}
 
+    per_asset_initial = float(config["initial_cash"]) / max(len(enabled_assets), 1)
     end = (now_utc.date() + timedelta(days=1)).isoformat()
     start = max(datetime.strptime(hourly_limit_start_date(), "%Y-%m-%d").date(), now_utc.date() - timedelta(days=7))
-    recent_df = download_hourly(symbol=symbol, start=str(start), end=end)
-    latest = recent_df.iloc[-1]
-    latest_dt = pd.Timestamp(latest["Datetime"])
-    latest_price = float(latest["Close"])
 
-    strategy_state = StrategyState(
-        cash=float(state["cash"]),
-        shares=float(state["shares"]),
-        peak=None if state["peak"] is None else float(state["peak"]),
-        trough=None if state["trough"] is None else float(state["trough"]),
-    )
+    total_value = 0.0
+    last_actions: list[str] = []
 
-    if strategy_state.cash == initial_cash and strategy_state.shares == 0.0:
-        strategy_state.shares = initial_cash / latest_price
-        strategy_state.cash = 0.0
-        strategy_state.peak = latest_price
-        strategy_state.trough = None
-        _append_csv(
-            TRADES_PATH,
+    for asset_cfg in enabled_assets:
+        symbol = asset_cfg["symbol"]
+        asset_state = state["assets"].get(
+            symbol,
             {
-                "Datetime": latest_dt.isoformat(),
-                "Action": "BUY",
-                "Price": latest_price,
-                "Shares_After": strategy_state.shares,
-                "Cash_After": strategy_state.cash,
-                "Portfolio_Value": portfolio_value(strategy_state, latest_price),
-                "buy_rise_pct": config["buy_rise_pct"],
-                "sell_drop_pct": config["sell_drop_pct"],
-                "Reason": "Initial full allocation",
+                "cash": per_asset_initial,
+                "shares": 0.0,
+                "peak": None,
+                "trough": None,
+                "last_price": 0.0,
+                "last_action": "HOLD",
+                "last_signal_reason": "No signal",
+                "last_bar_at": None,
+                "last_reopt_at": None,
+                "initial_cash": per_asset_initial,
             },
         )
+        state["assets"][symbol] = asset_state
 
-    buy_rise, sell_drop, reoptimized = _reoptimize_if_due(config=config, state=state, now_utc=now_utc)
-    action, reason = step_signal(strategy_state, latest_price, buy_rise=buy_rise, sell_drop=sell_drop)
-    port_val = portfolio_value(strategy_state, latest_price)
+        recent_df = download_hourly(symbol=symbol, start=str(start), end=end)
+        latest = recent_df.iloc[-1]
+        latest_dt = pd.Timestamp(latest["Datetime"])
+        latest_price = float(latest["Close"])
 
-    if action:
+        strategy_state = StrategyState(
+            cash=float(asset_state["cash"]),
+            shares=float(asset_state["shares"]),
+            peak=None if asset_state.get("peak") is None else float(asset_state["peak"]),
+            trough=None if asset_state.get("trough") is None else float(asset_state["trough"]),
+        )
+
+        symbol_initial_cash = float(asset_state.get("initial_cash", per_asset_initial))
+        if strategy_state.cash == symbol_initial_cash and strategy_state.shares == 0.0:
+            strategy_state.shares = symbol_initial_cash / latest_price
+            strategy_state.cash = 0.0
+            strategy_state.peak = latest_price
+            strategy_state.trough = None
+            _append_csv(
+                TRADES_PATH,
+                {
+                    "Datetime": latest_dt.isoformat(),
+                    "symbol": symbol,
+                    "Action": "BUY",
+                    "Price": latest_price,
+                    "Shares_After": strategy_state.shares,
+                    "Cash_After": strategy_state.cash,
+                    "Portfolio_Value": portfolio_value(strategy_state, latest_price),
+                    "buy_rise_pct": asset_cfg["buy_rise_pct"],
+                    "sell_drop_pct": asset_cfg["sell_drop_pct"],
+                    "Reason": "Initial full allocation",
+                },
+            )
+
+        buy_rise, sell_drop, reoptimized = _reoptimize_if_due(
+            asset_cfg=asset_cfg,
+            asset_state=asset_state,
+            initial_cash=symbol_initial_cash,
+            now_utc=now_utc,
+        )
+        action, reason = step_signal(strategy_state, latest_price, buy_rise=buy_rise, sell_drop=sell_drop)
+        port_val = portfolio_value(strategy_state, latest_price)
+        total_value += port_val
+
+        if action:
+            _append_csv(
+                TRADES_PATH,
+                {
+                    "Datetime": latest_dt.isoformat(),
+                    "symbol": symbol,
+                    "Action": action,
+                    "Price": latest_price,
+                    "Shares_After": strategy_state.shares,
+                    "Cash_After": strategy_state.cash,
+                    "Portfolio_Value": port_val,
+                    "buy_rise_pct": buy_rise * 100.0,
+                    "sell_drop_pct": sell_drop * 100.0,
+                    "Reason": reason,
+                },
+            )
+            if bool(config.get("alerts_enabled", True)):
+                send_signal_email(
+                    subject=f"[ALERT] {action} {symbol} @ {latest_price:.2f}",
+                    body=(
+                        f"Signal: {action}\n"
+                        f"Symbol: {symbol}\n"
+                        f"Time: {latest_dt.isoformat()}\n"
+                        f"Price: {latest_price:.4f}\n"
+                        f"Shares after: {strategy_state.shares:.8f}\n"
+                        f"Cash after: {strategy_state.cash:.2f}\n"
+                        f"Portfolio value: {port_val:.2f}\n"
+                        f"Thresholds: buy_rise={buy_rise*100:.3f}% sell_drop={sell_drop*100:.3f}%\n"
+                        f"Reoptimized this run: {reoptimized}"
+                    ),
+                )
+
         _append_csv(
-            TRADES_PATH,
+            EQUITY_PATH,
             {
                 "Datetime": latest_dt.isoformat(),
-                "Action": action,
-                "Price": latest_price,
-                "Shares_After": strategy_state.shares,
-                "Cash_After": strategy_state.cash,
+                "symbol": symbol,
+                "Close": latest_price,
+                "Shares": strategy_state.shares,
+                "Cash": strategy_state.cash,
                 "Portfolio_Value": port_val,
                 "buy_rise_pct": buy_rise * 100.0,
                 "sell_drop_pct": sell_drop * 100.0,
-                "Reason": reason,
             },
         )
-        if bool(config.get("alerts_enabled", True)):
-            send_signal_email(
-                subject=f"[ALERT] {action} {symbol} @ {latest_price:.2f}",
-                body=(
-                    f"Signal: {action}\n"
-                    f"Symbol: {symbol}\n"
-                    f"Time: {latest_dt.isoformat()}\n"
-                    f"Price: {latest_price:.4f}\n"
-                    f"Shares after: {strategy_state.shares:.8f}\n"
-                    f"Cash after: {strategy_state.cash:.2f}\n"
-                    f"Portfolio value: {port_val:.2f}\n"
-                    f"Thresholds: buy_rise={buy_rise*100:.3f}% sell_drop={sell_drop*100:.3f}%\n"
-                    f"Reoptimized this run: {reoptimized}"
-                ),
-            )
 
-    _append_csv(
-        EQUITY_PATH,
-        {
-            "Datetime": latest_dt.isoformat(),
-            "symbol": symbol,
-            "Close": latest_price,
-            "Shares": strategy_state.shares,
-            "Cash": strategy_state.cash,
-            "Portfolio_Value": port_val,
-            "buy_rise_pct": buy_rise * 100.0,
-            "sell_drop_pct": sell_drop * 100.0,
-        },
-    )
+        asset_state["cash"] = strategy_state.cash
+        asset_state["shares"] = strategy_state.shares
+        asset_state["peak"] = strategy_state.peak
+        asset_state["trough"] = strategy_state.trough
+        asset_state["last_price"] = latest_price
+        asset_state["last_action"] = action or "HOLD"
+        asset_state["last_signal_reason"] = reason
+        asset_state["last_bar_at"] = latest_dt.isoformat()
+        asset_state["initial_cash"] = symbol_initial_cash
+        last_actions.append(f"{symbol}:{asset_state['last_action']}")
 
-    state["cash"] = strategy_state.cash
-    state["shares"] = strategy_state.shares
-    state["peak"] = strategy_state.peak
-    state["trough"] = strategy_state.trough
-    state["last_price"] = latest_price
-    state["last_action"] = action or "HOLD"
-    state["last_signal_reason"] = reason
+    # Keep legacy top-level keys in sync for dashboard/backward compatibility.
+    primary_symbol = enabled_assets[0]["symbol"]
+    primary_state = state["assets"][primary_symbol]
+    state["cash"] = primary_state["cash"]
+    state["shares"] = primary_state["shares"]
+    state["peak"] = primary_state["peak"]
+    state["trough"] = primary_state["trough"]
+    state["last_price"] = primary_state["last_price"]
+    state["last_action"] = primary_state["last_action"]
+    state["last_signal_reason"] = primary_state["last_signal_reason"]
+    state["last_bar_at"] = primary_state["last_bar_at"]
+    state["last_reopt_at"] = primary_state.get("last_reopt_at")
+    state["portfolio_value"] = total_value
     state["last_run_at"] = now_utc.isoformat().replace("+00:00", "Z")
-    state["last_bar_at"] = latest_dt.isoformat()
+
+    config["assets"] = assets
     _write_json(STATE_PATH, state)
     _write_json(CONFIG_PATH, config)
 
-    print(f"symbol={symbol}")
-    print(f"latest_price={latest_price:.6f}")
-    print(f"action={state['last_action']}")
-    print(f"portfolio_value={port_val:.6f}")
-    print(f"reoptimized={reoptimized}")
+    print(f"assets={','.join([a['symbol'] for a in enabled_assets])}")
+    print(f"last_actions={';'.join(last_actions)}")
+    print(f"portfolio_value={total_value:.6f}")
 
 
 if __name__ == "__main__":
