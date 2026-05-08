@@ -162,9 +162,30 @@ def format_timestamp_in_timezone(raw_timestamp: str | None, tz_name: str) -> str
         return str(raw_timestamp)
 
 
+def notify(ok: bool, msg: str) -> None:
+    st.session_state["dashboard_notice"] = {"ok": bool(ok), "msg": str(msg)}
+
+
+def render_notice() -> None:
+    notice = st.session_state.get("dashboard_notice")
+    if not notice:
+        return
+    left, right = st.columns([0.88, 0.12])
+    with left:
+        if bool(notice.get("ok", False)):
+            st.success(str(notice.get("msg", "")))
+        else:
+            st.warning(str(notice.get("msg", "")))
+    with right:
+        if st.button("Dismiss", key="dismiss_dashboard_notice"):
+            st.session_state.pop("dashboard_notice", None)
+            st.rerun()
+
+
 def main() -> None:
     st.set_page_config(page_title="Trade Signal Dashboard", layout="wide")
     st.title("Autonomous Trade Alert Dashboard")
+    render_notice()
     display_tz = st.sidebar.text_input(
         "Display timezone",
         value=os.getenv("DASHBOARD_TIMEZONE", "America/Toronto"),
@@ -195,6 +216,15 @@ def main() -> None:
     total_portfolio_value = portfolio_cash + total_market_value
     strategy_value = float(state.get("cash", 0.0) + state.get("shares", 0.0) * state.get("last_price", 0.0))
 
+    st.markdown(
+        """
+        **How this app is organized**
+        - **Bot (Automation)**: configure and run automated signal checks.
+        - **Portfolio (Manual)**: track your real holdings/cash across many symbols.
+        - **History**: review trade and re-optimization logs.
+        """
+    )
+
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Automation Assets", str(len([a for a in strategy_assets if a.get("enabled", True)])))
     c2.metric("Last Action", state.get("last_action", "N/A"))
@@ -203,48 +233,15 @@ def main() -> None:
     c5.metric("Open Positions", str(int((positions_df["shares"] > 0).sum())))
     st.caption(f"Raw UTC timestamp: {state.get('last_run_at', 'Never')}")
     st.caption(f"Last Run (local): {format_timestamp_in_timezone(state.get('last_run_at'), display_tz)}")
-    st.info("Automation currently executes strategy signals for one symbol at a time. Portfolio Manager lets you track and adjust multiple holdings.")
+    st.info("Automation and portfolio tracking are separate: bot settings control alerts, while portfolio values are manually editable for your real account view.")
 
-    overview_tab, strategy_tab, portfolio_tab, activity_tab, howto_tab = st.tabs(
-        ["Overview", "Strategy Control", "Portfolio Manager", "Activity", "How To"]
+    bot_tab, portfolio_tab, history_tab, overview_tab, howto_tab = st.tabs(
+        ["Bot (Automation)", "Portfolio (Manual)", "History", "Overview", "How To"]
     )
 
-    with overview_tab:
-        st.subheader("Portfolio Allocation")
-        alloc_df = positions_df[positions_df["market_value"] > 0].copy()
-        if not alloc_df.empty and total_market_value > 0:
-            alloc_df["weight_pct"] = (alloc_df["market_value"] / total_market_value) * 100.0
-            pie = go.Figure(
-                data=[
-                    go.Pie(
-                        labels=alloc_df["symbol"],
-                        values=alloc_df["market_value"],
-                        hole=0.45,
-                        textinfo="label+percent",
-                    )
-                ]
-            )
-            pie.update_layout(margin=dict(t=20, b=20, l=20, r=20))
-            st.plotly_chart(pie, use_container_width=True)
-        else:
-            st.info("No active positions yet. Add holdings in Portfolio Manager.")
-
-        st.subheader("Strategy Equity Curve")
-        if not equity.empty:
-            equity["Datetime"] = pd.to_datetime(equity["Datetime"])
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=equity["Datetime"], y=equity["Portfolio_Value"], mode="lines", name="Portfolio Value"))
-            fig.update_layout(margin=dict(t=20, b=20, l=20, r=20))
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No equity data yet.")
-
-        st.subheader("Current Holdings")
-        holdings_view = positions_df[["symbol", "shares", "price", "market_value", "cost_basis", "notes"]].copy()
-        st.dataframe(holdings_view.sort_values("market_value", ascending=False), use_container_width=True, hide_index=True)
-
-    with strategy_tab:
-        st.subheader("Automation Settings")
+    with bot_tab:
+        st.subheader("Bot Controls")
+        st.caption("Use this page to configure automated signal checks and trigger runs.")
         assets_df = pd.DataFrame(strategy_assets)
         edited_assets = st.data_editor(
             assets_df,
@@ -269,7 +266,7 @@ def main() -> None:
                 help="Worker splits this across enabled assets for new positions.",
             )
             alerts_enabled = st.checkbox("Email alerts enabled", value=bool(config.get("alerts_enabled", True)))
-            save = st.form_submit_button("Save strategy settings")
+            save = st.form_submit_button("Save bot settings")
             if save:
                 clean_assets = edited_assets.copy()
                 clean_assets["symbol"] = clean_assets["symbol"].astype(str).str.upper().str.strip()
@@ -282,30 +279,31 @@ def main() -> None:
                     clean_assets["enabled"] = True
                 clean_assets["enabled"] = clean_assets["enabled"].fillna(True).astype(bool)
                 if clean_assets.empty:
-                    st.warning("Add at least one asset before saving.")
-                    st.stop()
-                primary = clean_assets.iloc[0]
-                config.update(
-                    {
-                        "symbol": str(primary["symbol"]),
-                        "buy_rise_pct": float(primary["buy_rise_pct"]),
-                        "sell_drop_pct": float(primary["sell_drop_pct"]),
-                        "x_days": int(primary["x_days"]),
-                        "reopt_days": int(primary["reopt_days"]),
-                        "initial_cash": float(initial_cash),
-                        "alerts_enabled": bool(alerts_enabled),
-                        "assets": clean_assets.to_dict(orient="records"),
-                    }
-                )
-                write_json(CONFIG_PATH, config)
-                ok, msg = commit_file_to_github(CONFIG_PATH, "Update trading config from dashboard")
-                st.success(msg) if ok else st.warning(msg)
+                    notify(False, "Add at least one asset before saving.")
+                else:
+                    primary = clean_assets.iloc[0]
+                    config.update(
+                        {
+                            "symbol": str(primary["symbol"]),
+                            "buy_rise_pct": float(primary["buy_rise_pct"]),
+                            "sell_drop_pct": float(primary["sell_drop_pct"]),
+                            "x_days": int(primary["x_days"]),
+                            "reopt_days": int(primary["reopt_days"]),
+                            "initial_cash": float(initial_cash),
+                            "alerts_enabled": bool(alerts_enabled),
+                            "assets": clean_assets.to_dict(orient="records"),
+                        }
+                    )
+                    write_json(CONFIG_PATH, config)
+                    ok, msg = commit_file_to_github(CONFIG_PATH, "Update trading config from dashboard")
+                    notify(ok, msg)
 
         if st.button("Run check now"):
             ok, msg = trigger_workflow()
-            st.success(msg) if ok else st.warning(msg)
+            notify(ok, msg)
 
         st.subheader("Manual Strategy State Override")
+        st.caption("Only use this if strategy state is out of sync and needs correction.")
         with st.form("strategy_state_form"):
             state_cash = st.number_input("Strategy Cash", min_value=0.0, value=float(state.get("cash", 0.0)), step=100.0)
             state_shares = st.number_input("Strategy Shares", min_value=0.0, value=float(state.get("shares", 0.0)), step=0.1)
@@ -317,11 +315,11 @@ def main() -> None:
                 state["last_price"] = float(state_price)
                 write_json(STATE_PATH, state)
                 ok, msg = commit_file_to_github(STATE_PATH, "Update strategy state from dashboard")
-                st.success(msg) if ok else st.warning(msg)
+                notify(ok, msg)
 
     with portfolio_tab:
         st.subheader("Portfolio Manager")
-        st.caption("Track multiple stocks/ETFs and adjust cash/positions in one place.")
+        st.caption("Use this page as your manual account tracker (cash + holdings).")
         portfolio_cash_input = st.number_input("Cash Balance", min_value=0.0, value=portfolio_cash, step=100.0)
         editor_df = positions_df[["symbol", "shares", "price", "cost_basis", "notes"]].copy()
         edited_positions = st.data_editor(
@@ -358,10 +356,10 @@ def main() -> None:
             }
             write_json(PORTFOLIO_PATH, portfolio)
             ok, msg = commit_file_to_github(PORTFOLIO_PATH, "Update portfolio from dashboard")
-            st.success(msg) if ok else st.warning(msg)
+            notify(ok, msg)
             st.rerun()
 
-    with activity_tab:
+    with history_tab:
         left, right = st.columns(2)
         with left:
             st.subheader("Recent Trades")
@@ -372,21 +370,55 @@ def main() -> None:
         st.subheader("Last Signal Reason")
         st.code(str(state.get("last_signal_reason", "No reason available")))
 
+    with overview_tab:
+        st.subheader("Portfolio Allocation")
+        alloc_df = positions_df[positions_df["market_value"] > 0].copy()
+        if not alloc_df.empty and total_market_value > 0:
+            alloc_df["weight_pct"] = (alloc_df["market_value"] / total_market_value) * 100.0
+            pie = go.Figure(
+                data=[
+                    go.Pie(
+                        labels=alloc_df["symbol"],
+                        values=alloc_df["market_value"],
+                        hole=0.45,
+                        textinfo="label+percent",
+                    )
+                ]
+            )
+            pie.update_layout(margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(pie, use_container_width=True)
+        else:
+            st.info("No active positions yet. Add holdings in Portfolio Manager.")
+
+        st.subheader("Strategy Equity Curve")
+        if not equity.empty:
+            equity["Datetime"] = pd.to_datetime(equity["Datetime"])
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=equity["Datetime"], y=equity["Portfolio_Value"], mode="lines", name="Portfolio Value"))
+            fig.update_layout(margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No equity data yet.")
+
+        st.subheader("Current Holdings")
+        holdings_view = positions_df[["symbol", "shares", "price", "market_value", "cost_basis", "notes"]].copy()
+        st.dataframe(holdings_view.sort_values("market_value", ascending=False), use_container_width=True, hide_index=True)
+
     with howto_tab:
         st.subheader("How to use this dashboard")
         st.markdown(
             """
             **Daily workflow**
-            1. Open **Overview** and verify **Last Run (local)** updates regularly.
-            2. Review **Tracked Portfolio** and current holdings allocation.
-            3. Use **Portfolio Manager** to update cash and multiple stock/ETF positions.
-            4. Use **Strategy Control** to manage automation assets, tune thresholds, and run an immediate check.
-            5. Review **Activity** for latest trades and parameter re-optimizations.
+            1. Open **Bot (Automation)** and keep your automated asset list/settings up to date.
+            2. Click **Run check now** when you want to trigger a manual workflow run.
+            3. Use **Portfolio (Manual)** to maintain cash and holdings for your real account view.
+            4. Use **History** to inspect recent trades and threshold re-optimizations.
+            5. Use **Overview** for high-level visuals and allocation.
 
             **Important behavior**
-            - Automated worker now supports multiple enabled assets from the strategy table.
-            - New assets receive equal initial-cash allocation from the total strategy initial cash.
-            - Manual strategy overrides are useful when you need to correct state after external trades.
+            - The bot and manual portfolio tracker are separate so you can compare model vs real holdings.
+            - Automated worker supports multiple enabled assets from the bot table.
+            - New bot assets receive equal initial-cash allocation from total strategy initial cash.
             """
         )
 
