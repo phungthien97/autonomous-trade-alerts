@@ -375,6 +375,7 @@ def main() -> None:
     s1.markdown(f"**Last Worker Run (local)**  \n`{format_timestamp_in_timezone(state.get('last_run_at'), display_tz)}`")
     s2.markdown(f"**Latest Bar Pull (local)**  \n`{format_timestamp_in_timezone(state.get('last_bar_at'), display_tz)}`")
     s3.markdown(f"**Enabled Assets**  \n`{len([a for a in strategy_assets if a.get('enabled', True)])}`")
+    st.caption("Data mode: Regular + Extended Hours (pre/post-market included when available).")
 
     bot_tab, snapshot_tab, history_tab, performance_tab, guide_tab = st.tabs(
         ["Bot Setup", "Live Snapshot", "History", "Performance", "Guide"]

@@ -19,7 +19,7 @@ def download_hourly(symbol: str, start: str, end: str) -> pd.DataFrame:
         interval="60m",
         auto_adjust=False,
         progress=False,
-        prepost=False,
+        prepost=True,
         multi_level_index=False,
     )
     if df.empty:
