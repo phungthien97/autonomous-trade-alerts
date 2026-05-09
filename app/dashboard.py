@@ -323,7 +323,7 @@ def main() -> None:
                 "sell_drop_pct": st.column_config.NumberColumn("Sell drop %", min_value=0.1, max_value=30.0, step=0.1),
                 "x_days": st.column_config.NumberColumn("x days", min_value=5, max_value=365, step=1),
                 "reopt_days": st.column_config.NumberColumn("reopt every N days", min_value=1, max_value=30, step=1),
-                "enabled": st.column_config.CheckboxColumn("Enabled"),
+                "enabled": st.column_config.CheckboxColumn("Run in live bot"),
                 "reinit_params": st.column_config.CheckboxColumn("Re-init from 1Y data"),
             },
         )
