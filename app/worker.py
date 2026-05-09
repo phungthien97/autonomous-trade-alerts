@@ -129,6 +129,8 @@ def run_once() -> None:
 
     total_value = 0.0
     last_actions: list[str] = []
+    processed_assets = 0
+    changed_any = False
 
     for asset_cfg in enabled_assets:
         symbol = asset_cfg["symbol"]
@@ -153,6 +155,15 @@ def run_once() -> None:
         latest = recent_df.iloc[-1]
         latest_dt = pd.Timestamp(latest["Datetime"])
         latest_price = float(latest["Close"])
+        prev_bar_raw = asset_state.get("last_bar_at")
+        prev_bar = pd.to_datetime(prev_bar_raw, utc=True, errors="coerce") if prev_bar_raw else pd.NaT
+        if pd.notna(prev_bar) and latest_dt <= prev_bar:
+            # No new bar for this symbol since last run: skip writes to reduce churn.
+            existing_val = float(asset_state.get("cash", 0.0)) + float(asset_state.get("shares", 0.0)) * float(asset_state.get("last_price", 0.0))
+            total_value += existing_val
+            last_actions.append(f"{symbol}:SKIP")
+            continue
+        processed_assets += 1
 
         strategy_state = StrategyState(
             cash=float(asset_state["cash"]),
@@ -182,6 +193,7 @@ def run_once() -> None:
                     "Reason": "Initial full allocation",
                 },
             )
+            changed_any = True
 
         buy_rise, sell_drop, reoptimized = _reoptimize_if_due(
             asset_cfg=asset_cfg,
@@ -209,6 +221,7 @@ def run_once() -> None:
                     "Reason": reason,
                 },
             )
+            changed_any = True
             if bool(config.get("alerts_enabled", True)):
                 send_signal_email(
                     subject=f"[ALERT] {action} {symbol} @ {latest_price:.2f}",
@@ -238,6 +251,7 @@ def run_once() -> None:
                 "sell_drop_pct": sell_drop * 100.0,
             },
         )
+        changed_any = True
 
         asset_state["cash"] = strategy_state.cash
         asset_state["shares"] = strategy_state.shares
@@ -249,6 +263,12 @@ def run_once() -> None:
         asset_state["last_bar_at"] = latest_dt.isoformat()
         asset_state["initial_cash"] = symbol_initial_cash
         last_actions.append(f"{symbol}:{asset_state['last_action']}")
+        changed_any = True
+
+    if processed_assets == 0 and not changed_any:
+        print("no_new_bars=true")
+        print(f"assets={','.join([a['symbol'] for a in enabled_assets])}")
+        return
 
     # Keep legacy top-level keys in sync for dashboard/backward compatibility.
     primary_symbol = enabled_assets[0]["symbol"]
