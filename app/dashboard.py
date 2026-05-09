@@ -286,6 +286,19 @@ def inject_styles() -> None:
     )
 
 
+def _fmt_optional_price(val: object) -> str:
+    if val is None:
+        return "—"
+    try:
+        return f"{float(val):.4f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _strategy_position_label(shares: float) -> str:
+    return "Shares" if float(shares or 0.0) > 1e-9 else "Cash"
+
+
 def build_price_snapshot(strategy_assets: list[dict], state: dict, display_tz: str) -> pd.DataFrame:
     asset_states = state.get("assets", {})
     rows: list[dict] = []
@@ -294,12 +307,23 @@ def build_price_snapshot(strategy_assets: list[dict], state: dict, display_tz: s
         if not symbol:
             continue
         s = asset_states.get(symbol, {})
+        cash = float(s.get("cash", 0.0) or 0.0)
+        sh = float(s.get("shares", 0.0) or 0.0)
+        lp = s.get("last_price")
+        last_px = float(lp) if lp is not None else 0.0
+        model_value = cash + sh * last_px
         rows.append(
             {
                 "symbol": symbol,
                 "currency": get_symbol_currency(symbol),
                 "run_in_live_bot": bool(asset.get("enabled", True)),
-                "last_price": float(s.get("last_price", 0.0)) if s.get("last_price") is not None else None,
+                "position": _strategy_position_label(sh),
+                "cash": round(cash, 2),
+                "shares": round(sh, 6),
+                "last_price": last_px if lp is not None else None,
+                "peak": _fmt_optional_price(s.get("peak")),
+                "trough": _fmt_optional_price(s.get("trough")),
+                "model_value": round(model_value, 2) if lp is not None else None,
                 "pulled_at_local": format_timestamp_in_timezone(s.get("last_bar_at"), display_tz),
                 "last_action": s.get("last_action", "N/A"),
                 "signal_reason": s.get("last_signal_reason", "N/A"),
@@ -307,7 +331,21 @@ def build_price_snapshot(strategy_assets: list[dict], state: dict, display_tz: s
         )
     if not rows:
         return pd.DataFrame(
-            columns=["symbol", "currency", "run_in_live_bot", "last_price", "pulled_at_local", "last_action", "signal_reason"]
+            columns=[
+                "symbol",
+                "currency",
+                "run_in_live_bot",
+                "position",
+                "cash",
+                "shares",
+                "last_price",
+                "peak",
+                "trough",
+                "model_value",
+                "pulled_at_local",
+                "last_action",
+                "signal_reason",
+            ]
         )
     return pd.DataFrame(rows).sort_values(["run_in_live_bot", "symbol"], ascending=[False, True]).reset_index(drop=True)
 
@@ -366,7 +404,7 @@ def main() -> None:
         """
         <div class="section-note">
         <b>Workspace layout</b><br>
-        <span class="small-muted">Bot Setup configures symbols and parameters. Live Snapshot shows latest pulled prices. History and Performance track outcomes.</span>
+        <span class="small-muted">Bot Setup configures symbols and parameters. Live Snapshot shows prices, model position (cash vs shares), peak/trough, and timestamps. History and Performance track outcomes.</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -473,6 +511,19 @@ def main() -> None:
                 selected_symbol = st.selectbox("Asset", options=monitor_symbols, key="monitor_symbol")
                 selected_cfg = next((a for a in strategy_assets if str(a.get("symbol", "")).upper() == selected_symbol), {})
                 asset_state = state.get("assets", {}).get(selected_symbol, {})
+                acash = float(asset_state.get("cash", 0.0) or 0.0)
+                ashares = float(asset_state.get("shares", 0.0) or 0.0)
+                alp = asset_state.get("last_price")
+                st.markdown("**Model position** (simulated)")
+                st.caption(_strategy_position_label(ashares))
+                st.metric("Cash", f"{acash:,.2f}")
+                st.metric("Shares", f"{ashares:.6f}")
+                if alp is not None:
+                    st.metric("Model value", f"{acash + ashares * float(alp):,.2f}")
+                st.markdown("**Threshold anchors**")
+                st.metric("Peak (while invested)", _fmt_optional_price(asset_state.get("peak")))
+                st.metric("Trough (while in cash)", _fmt_optional_price(asset_state.get("trough")))
+                st.markdown("**Parameters**")
                 st.metric("Buy rise %", f"{float(selected_cfg.get('buy_rise_pct', 0.0)):.3f}")
                 st.metric("Sell drop %", f"{float(selected_cfg.get('sell_drop_pct', 0.0)):.3f}")
                 st.metric("x days", str(int(selected_cfg.get("x_days", 0))))
@@ -484,6 +535,7 @@ def main() -> None:
 
     with snapshot_tab:
         st.subheader("Live Price Snapshot")
+        st.caption("Position / cash / shares / peak / trough reflect the **bot simulation** per symbol, not your broker account.")
         price_snapshot = build_price_snapshot(strategy_assets, state, display_tz)
         if price_snapshot.empty:
             st.info("No symbols configured yet. Add assets in Bot Setup.")
@@ -566,6 +618,64 @@ def main() -> None:
             - `Re-init from 1Y data` is a one-time recalibration flag and resets after save.
             """
         )
+        with st.expander("Glossary", expanded=False):
+            st.markdown(
+                """
+                **Tabs & screens**
+
+                - **Bot Setup** — Configure symbols, thresholds, email alerts, and save settings. Trigger **Run check now** and inspect one symbol in **Selected Asset Monitor**.
+                - **Live Snapshot** — Table of all configured symbols: latest price, model cash/shares, peak/trough, and timestamps.
+                - **History** — Recent simulated trades and parameter re-optimization rows from logs (`state/` CSVs).
+                - **Performance** — Equity curve built from logged portfolio values (per symbol or combined).
+
+                **Automation**
+
+                - **Worker** — The Python job (`app.worker`) that downloads prices, runs the strategy, updates state files, and sends email on BUY/SELL signals.
+                - **GitHub Actions workflow** — Scheduled (and manual) runs that execute the worker on GitHub’s servers.
+                - **Run check now** — Dispatches one immediate workflow run from the dashboard (needs Streamlit secrets: `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, optional `GITHUB_BRANCH`).
+
+                **Bot Setup columns**
+
+                - **Symbol** — Yahoo Finance ticker (e.g. `ZSP.TO`, `AAPL`). Must match Yahoo’s naming for your exchange.
+                - **Buy rise %** — While the **model** is in **cash**, the strategy watches a **trough** (low). If price rises from that trough by at least this percent → simulated **BUY**.
+                - **Sell drop %** — While the **model** holds **shares**, it watches a **peak** (high). If price falls from that peak by at least this percent → simulated **SELL**.
+                - **x days** — Lookback length (in trading days) used when re-optimizing thresholds from historical hourly data.
+                - **Re-opt every N days** — How often the worker may refresh buy/sell thresholds using recent history.
+                - **Run in live bot** — If checked, this symbol is processed on each worker run; if unchecked, it stays listed but is skipped.
+                - **Re-init from 1Y data** — On save, re-estimates parameters from ~1 year of hourly history for that row only; checkbox clears after save.
+                - **Initial cash per asset** — Starting capital **per symbol** for the **simulation** (not your real broker balance).
+                - **Email alerts enabled** — When on, the worker emails on simulated BUY/SELL (requires Gmail secrets in GitHub Actions).
+
+                **Live Snapshot columns**
+
+                - **Currency** — Quote currency for the symbol when known (from Yahoo); `.TO` / `.V` often imply CAD.
+                - **Position** — **Cash** vs **Shares**: whether the **model** currently holds stock or cash for that symbol.
+                - **Cash / Shares** — Simulated balances used by the strategy (not your brokerage account).
+                - **Last price** — Latest close from the downloaded bar series (includes extended hours when data mode allows).
+                - **Peak** — Rolling high tracked while the model is invested; used with **Sell drop %**. Shows **—** when not applicable.
+                - **Trough** — Rolling low tracked while the model is in cash; used with **Buy rise %**. Shows **—** when not applicable.
+                - **Model value** — `cash + shares × last_price` for that symbol’s simulation.
+                - **Pulled at (local)** — Timestamp of the **market bar** used for that symbol’s last successful processing (your chosen display timezone).
+                - **Last action** — Latest outcome for that symbol: BUY, SELL, HOLD, SKIP, etc.
+                - **Signal reason** — Short explanation from the strategy (e.g. “No signal”, data skip reason).
+
+                **Header / timing**
+
+                - **Last Worker Run** — When the worker last finished a run and wrote `state/state.json` (UTC stored; shown in local time).
+                - **Latest Bar Pull** — Timestamp of the **most recent candle** tied to the primary symbol’s top-level state; may differ from per-symbol bar times in the table.
+                - **Data mode: Regular + Extended Hours** — Price downloads include pre/post-market bars when Yahoo supplies them.
+
+                **Simulation vs real money**
+
+                - The app **does not place broker orders**. Signals and cash/shares are a **model portfolio**. Your real holdings can differ unless you mirror trades manually or add integrations later.
+
+                **History / Performance**
+
+                - **Recent Trades** — Logged simulated trades (symbol, action, price, etc.).
+                - **Recent Re-optimizations** — Logged threshold updates from optimization passes.
+                - **Equity curve / Net P/L** — Derived from logged **model** portfolio values, not guaranteed to match your actual account.
+                """
+            )
 
 
 if __name__ == "__main__":
