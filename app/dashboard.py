@@ -79,6 +79,33 @@ def commit_file_to_github(path: Path, message: str) -> tuple[bool, str]:
         return False, f"Failed to commit to GitHub: {exc}"
 
 
+def read_json_from_github(rel_path: str) -> dict | None:
+    token = os.getenv("GITHUB_TOKEN")
+    repo = os.getenv("GITHUB_REPOSITORY")
+    branch = os.getenv("GITHUB_BRANCH", "main")
+    if not token or not repo:
+        return None
+    url = f"https://api.github.com/repos/{repo}/contents/{rel_path}?ref={branch}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            content_b64 = payload.get("content", "").replace("\n", "")
+            if not content_b64:
+                return None
+            raw = base64.b64decode(content_b64).decode("utf-8")
+            return json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def trigger_workflow() -> tuple[bool, str]:
     token = os.getenv("GITHUB_TOKEN")
     repo = os.getenv("GITHUB_REPOSITORY")
@@ -307,6 +334,12 @@ def main() -> None:
 
     config = read_json(CONFIG_PATH)
     state = read_json(STATE_PATH)
+    remote_state = read_json_from_github("state/state.json")
+    if isinstance(remote_state, dict):
+        local_run = pd.to_datetime(state.get("last_run_at"), utc=True, errors="coerce")
+        remote_run = pd.to_datetime(remote_state.get("last_run_at"), utc=True, errors="coerce")
+        if pd.notna(remote_run) and (pd.isna(local_run) or remote_run >= local_run):
+            state = remote_state
     trades = read_csv_or_empty(TRADES_PATH)
     equity = read_csv_or_empty(EQUITY_PATH)
     params_hist = read_csv_or_empty(PARAMS_PATH)
@@ -418,7 +451,7 @@ def main() -> None:
             if st.button("Run check now", use_container_width=True):
                 ok, msg = trigger_workflow()
                 notify(ok, msg)
-            st.caption("Triggers one immediate pull and signal run.")
+            st.caption("Triggers one immediate pull and signal run. Last Worker Run updates after the workflow completes.")
             st.markdown("---")
             st.subheader("Selected Asset Monitor")
             monitor_symbols = [str(a.get("symbol", "")).upper() for a in strategy_assets if str(a.get("symbol", "")).strip()]
