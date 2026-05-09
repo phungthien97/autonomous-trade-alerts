@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import yfinance as yf
 try:
     from app.data import download_hourly, hourly_limit_start_date
     from app.strategy import optimize_params
@@ -296,6 +297,7 @@ def build_price_snapshot(strategy_assets: list[dict], state: dict, display_tz: s
         rows.append(
             {
                 "symbol": symbol,
+                "currency": get_symbol_currency(symbol),
                 "run_in_live_bot": bool(asset.get("enabled", True)),
                 "last_price": float(s.get("last_price", 0.0)) if s.get("last_price") is not None else None,
                 "pulled_at_local": format_timestamp_in_timezone(s.get("last_bar_at"), display_tz),
@@ -305,9 +307,26 @@ def build_price_snapshot(strategy_assets: list[dict], state: dict, display_tz: s
         )
     if not rows:
         return pd.DataFrame(
-            columns=["symbol", "run_in_live_bot", "last_price", "pulled_at_local", "last_action", "signal_reason"]
+            columns=["symbol", "currency", "run_in_live_bot", "last_price", "pulled_at_local", "last_action", "signal_reason"]
         )
     return pd.DataFrame(rows).sort_values(["run_in_live_bot", "symbol"], ascending=[False, True]).reset_index(drop=True)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_symbol_currency(symbol: str) -> str:
+    try:
+        ticker = yf.Ticker(symbol)
+        fast_info = getattr(ticker, "fast_info", None)
+        if fast_info:
+            ccy = fast_info.get("currency")
+            if ccy:
+                return str(ccy).upper()
+    except Exception:  # noqa: BLE001
+        pass
+    # Suffix fallback when Yahoo metadata is unavailable.
+    if symbol.endswith(".TO") or symbol.endswith(".V"):
+        return "CAD"
+    return "USD?"
 
 
 def main() -> None:
