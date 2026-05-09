@@ -1,27 +1,74 @@
 {
-  "symbol": "ZSP.TO",
+  "symbol": "AAPL.TO",
   "initial_cash": 1000.0,
   "buy_rise_pct": 1.0,
-  "sell_drop_pct": 1.5,
+  "sell_drop_pct": 3.5,
   "x_days": 20,
   "reopt_days": 5,
   "alerts_enabled": true,
   "assets": [
-    {
-      "symbol": "ZSP.TO",
-      "buy_rise_pct": 1.0,
-      "sell_drop_pct": 1.5,
-      "x_days": 20,
-      "reopt_days": 5,
-      "enabled": true
-    },
     {
       "symbol": "AAPL.TO",
       "buy_rise_pct": 1.0,
       "sell_drop_pct": 3.5,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true
+      "enabled": true,
+      "reinit_params": false
+    },
+    {
+      "symbol": "AMD.TO",
+      "buy_rise_pct": 1.0,
+      "sell_drop_pct": 7.0,
+      "x_days": 20,
+      "reopt_days": 5,
+      "enabled": true,
+      "reinit_params": false
+    },
+    {
+      "symbol": "GOOG.TO",
+      "buy_rise_pct": 6.0,
+      "sell_drop_pct": 10.0,
+      "x_days": 20,
+      "reopt_days": 5,
+      "enabled": true,
+      "reinit_params": false
+    },
+    {
+      "symbol": "MSFT.TO",
+      "buy_rise_pct": 10.0,
+      "sell_drop_pct": 4.0,
+      "x_days": 20,
+      "reopt_days": 5,
+      "enabled": true,
+      "reinit_params": false
+    },
+    {
+      "symbol": "NVDA.TO",
+      "buy_rise_pct": 1.0,
+      "sell_drop_pct": 3.5,
+      "x_days": 20,
+      "reopt_days": 5,
+      "enabled": true,
+      "reinit_params": false
+    },
+    {
+      "symbol": "SMH.TO",
+      "buy_rise_pct": 1.0,
+      "sell_drop_pct": 1.5,
+      "x_days": 20,
+      "reopt_days": 5,
+      "enabled": true,
+      "reinit_params": false
+    },
+    {
+      "symbol": "ZSP.TO",
+      "buy_rise_pct": 3.0,
+      "sell_drop_pct": 4.5,
+      "x_days": 20,
+      "reopt_days": 5,
+      "enabled": true,
+      "reinit_params": false
     }
   ]
 }
