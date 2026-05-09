@@ -357,6 +357,33 @@ def main() -> None:
         if st.button("Run check now"):
             ok, msg = trigger_workflow()
             notify(ok, msg)
+        st.caption("Manual pull: click `Run check now` here, or run the workflow manually in GitHub Actions.")
+
+        st.subheader("Latest pulled prices (all bot assets)")
+        if strategy_assets:
+            asset_states = state.get("assets", {})
+            rows: list[dict] = []
+            for asset in strategy_assets:
+                symbol = str(asset.get("symbol", "")).strip().upper()
+                if not symbol:
+                    continue
+                s = asset_states.get(symbol, {})
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "run_in_live_bot": bool(asset.get("enabled", True)),
+                        "last_price": float(s.get("last_price", 0.0)) if s.get("last_price") is not None else None,
+                        "pulled_at_local": format_timestamp_in_timezone(s.get("last_bar_at"), display_tz),
+                        "last_action": s.get("last_action", "N/A"),
+                    }
+                )
+            if rows:
+                prices_df = pd.DataFrame(rows).sort_values(["run_in_live_bot", "symbol"], ascending=[False, True])
+                st.dataframe(prices_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No symbols available yet.")
+        else:
+            st.info("No bot assets configured yet. Add symbols above and save to initialize parameters.")
 
         st.subheader("Per-asset Monitor")
         if strategy_assets:
