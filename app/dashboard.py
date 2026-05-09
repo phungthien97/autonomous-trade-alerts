@@ -230,15 +230,80 @@ def initialize_asset_params(assets_df: pd.DataFrame, initial_cash: float) -> tup
     return out, notes
 
 
+def inject_styles() -> None:
+    st.markdown(
+        """
+        <style>
+            .main-title {
+                font-size: 2rem;
+                font-weight: 700;
+                margin-bottom: 0.15rem;
+            }
+            .subtitle {
+                color: #6b7280;
+                margin-bottom: 1rem;
+            }
+            .section-note {
+                background: #f8fafc;
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                padding: 0.65rem 0.9rem;
+                margin-bottom: 0.8rem;
+            }
+            .small-muted {
+                color: #6b7280;
+                font-size: 0.9rem;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def build_price_snapshot(strategy_assets: list[dict], state: dict, display_tz: str) -> pd.DataFrame:
+    asset_states = state.get("assets", {})
+    rows: list[dict] = []
+    for asset in strategy_assets:
+        symbol = str(asset.get("symbol", "")).strip().upper()
+        if not symbol:
+            continue
+        s = asset_states.get(symbol, {})
+        rows.append(
+            {
+                "symbol": symbol,
+                "run_in_live_bot": bool(asset.get("enabled", True)),
+                "last_price": float(s.get("last_price", 0.0)) if s.get("last_price") is not None else None,
+                "pulled_at_local": format_timestamp_in_timezone(s.get("last_bar_at"), display_tz),
+                "last_action": s.get("last_action", "N/A"),
+                "signal_reason": s.get("last_signal_reason", "N/A"),
+            }
+        )
+    if not rows:
+        return pd.DataFrame(
+            columns=["symbol", "run_in_live_bot", "last_price", "pulled_at_local", "last_action", "signal_reason"]
+        )
+    return pd.DataFrame(rows).sort_values(["run_in_live_bot", "symbol"], ascending=[False, True]).reset_index(drop=True)
+
+
 def main() -> None:
-    st.set_page_config(page_title="Trade Signal Dashboard", layout="wide")
-    st.title("Autonomous Trade Alert Dashboard")
+    st.set_page_config(page_title="Autonomous Trade Alert Dashboard", layout="wide")
+    inject_styles()
+    st.markdown('<div class="main-title">Autonomous Trade Alert Dashboard</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="subtitle">Clean control center for multi-asset signal automation.</div>',
+        unsafe_allow_html=True,
+    )
     render_notice()
+
     display_tz = st.sidebar.text_input(
         "Display timezone",
         value=os.getenv("DASHBOARD_TIMEZONE", "America/Toronto"),
         help="Use an IANA timezone like America/Toronto, America/New_York, or Asia/Ho_Chi_Minh.",
     ).strip()
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Run Status")
+    st.sidebar.caption("Worker schedule: every 10 minutes, Monday-Friday.")
+    st.sidebar.caption("Need an immediate pull? Use `Run check now` in Bot Setup.")
 
     config = read_json(CONFIG_PATH)
     state = read_json(STATE_PATH)
@@ -247,194 +312,211 @@ def main() -> None:
     params_hist = read_csv_or_empty(PARAMS_PATH)
     strategy_assets = normalize_assets_from_config(config)
 
-    strategy_value = float(state.get("portfolio_value", state.get("cash", 0.0) + state.get("shares", 0.0) * state.get("last_price", 0.0)))
-
     st.markdown(
         """
-        **How this app is organized**
-        - **Bot (Automation)**: configure and run automated signal checks.
-        - **History**: review trade and re-optimization logs.
-        - **Overview**: monitor strategy-level metrics and performance.
-        """
+        <div class="section-note">
+        <b>Workspace layout</b><br>
+        <span class="small-muted">Bot Setup configures symbols and parameters. Live Snapshot shows latest pulled prices. History and Performance track outcomes.</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+    s1, s2, s3 = st.columns(3)
+    s1.markdown(f"**Last Worker Run (local)**  \n`{format_timestamp_in_timezone(state.get('last_run_at'), display_tz)}`")
+    s2.markdown(f"**Latest Bar Pull (local)**  \n`{format_timestamp_in_timezone(state.get('last_bar_at'), display_tz)}`")
+    s3.markdown(f"**Enabled Assets**  \n`{len([a for a in strategy_assets if a.get('enabled', True)])}`")
 
-    latest_pulled_price = float(state.get("last_price", 0.0))
-    latest_pulled_at_local = format_timestamp_in_timezone(state.get("last_bar_at"), display_tz)
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Automation Assets", str(len([a for a in strategy_assets if a.get("enabled", True)])))
-    c2.metric("Last Action", state.get("last_action", "N/A"))
-    c3.metric("Strategy Value", f"{strategy_value:,.2f}")
-    c4.metric("Latest Pulled Price", f"{latest_pulled_price:.2f}")
-    c5.metric("Pulled At (local)", latest_pulled_at_local)
-    st.caption(f"Raw UTC timestamp: {state.get('last_run_at', 'Never')}")
-    st.caption(f"Last Run (local): {format_timestamp_in_timezone(state.get('last_run_at'), display_tz)}")
-    st.info("Bot-only mode: this dashboard now focuses on automated signal configuration, monitoring, and logs.")
-
-    bot_tab, history_tab, overview_tab, howto_tab = st.tabs(
-        ["Bot (Automation)", "History", "Overview", "How To"]
+    bot_tab, snapshot_tab, history_tab, performance_tab, guide_tab = st.tabs(
+        ["Bot Setup", "Live Snapshot", "History", "Performance", "Guide"]
     )
 
     with bot_tab:
-        st.subheader("Bot Controls")
-        st.caption("Use this page to configure automated signal checks and trigger runs.")
-        st.caption("Ticker format uses Yahoo symbols (example: `ZSP.TO`, `AAPL`, `MSFT`).")
-        assets_df = pd.DataFrame(
-            strategy_assets,
-            columns=["symbol", "buy_rise_pct", "sell_drop_pct", "x_days", "reopt_days", "enabled", "reinit_params"],
-        )
-        edited_assets = st.data_editor(
-            assets_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "symbol": st.column_config.TextColumn("Symbol", required=True),
-                "buy_rise_pct": st.column_config.NumberColumn("Buy rise %", min_value=0.1, max_value=30.0, step=0.1),
-                "sell_drop_pct": st.column_config.NumberColumn("Sell drop %", min_value=0.1, max_value=30.0, step=0.1),
-                "x_days": st.column_config.NumberColumn("x days", min_value=5, max_value=365, step=1),
-                "reopt_days": st.column_config.NumberColumn("reopt every N days", min_value=1, max_value=30, step=1),
-                "enabled": st.column_config.CheckboxColumn("Run in live bot"),
-                "reinit_params": st.column_config.CheckboxColumn("Re-init from 1Y data"),
-            },
-        )
-        with st.form("config_form"):
-            initial_cash = st.number_input(
-                "Initial cash per asset",
-                min_value=100.0,
-                value=float(config.get("initial_cash", 1000.0)),
-                step=100.0,
-                help="Each enabled asset starts with this same amount.",
+        left, right = st.columns([0.72, 0.28], gap="large")
+        with left:
+            st.subheader("Asset Configuration")
+            st.caption("Ticker format uses Yahoo symbols (example: `ZSP.TO`, `AAPL`, `MSFT`).")
+            assets_df = pd.DataFrame(
+                strategy_assets,
+                columns=["symbol", "buy_rise_pct", "sell_drop_pct", "x_days", "reopt_days", "enabled", "reinit_params"],
             )
-            alerts_enabled = st.checkbox("Email alerts enabled", value=bool(config.get("alerts_enabled", True)))
-            save = st.form_submit_button("Save bot settings")
-            if save:
-                clean_assets = edited_assets.copy()
-                default_suffix = ""
-                base_symbol = str(config.get("symbol", "")).strip().upper()
-                if "." in base_symbol:
-                    default_suffix = "." + base_symbol.split(".", 1)[1]
-                clean_assets["symbol"] = clean_assets["symbol"].apply(lambda v: normalize_symbol(v, default_suffix=default_suffix))
-                clean_assets = clean_assets[clean_assets["symbol"] != ""]
-                clean_assets["buy_rise_pct"] = pd.to_numeric(clean_assets["buy_rise_pct"], errors="coerce")
-                clean_assets["sell_drop_pct"] = pd.to_numeric(clean_assets["sell_drop_pct"], errors="coerce")
-                clean_assets["x_days"] = pd.to_numeric(clean_assets["x_days"], errors="coerce")
-                clean_assets["reopt_days"] = pd.to_numeric(clean_assets["reopt_days"], errors="coerce")
-                if "enabled" not in clean_assets.columns:
-                    clean_assets["enabled"] = True
-                clean_assets["enabled"] = clean_assets["enabled"].fillna(True).astype(bool)
-                if "reinit_params" not in clean_assets.columns:
-                    clean_assets["reinit_params"] = False
-                clean_assets["reinit_params"] = clean_assets["reinit_params"].fillna(False).astype(bool)
-                if clean_assets.empty:
-                    notify(False, "Add at least one asset before saving.")
-                else:
-                    with st.spinner("Initializing missing parameters from 1Y hourly data..."):
-                        clean_assets, init_notes = initialize_asset_params(clean_assets, initial_cash=float(initial_cash))
-                    clean_assets["buy_rise_pct"] = pd.to_numeric(clean_assets["buy_rise_pct"], errors="coerce").fillna(1.0)
-                    clean_assets["sell_drop_pct"] = pd.to_numeric(clean_assets["sell_drop_pct"], errors="coerce").fillna(1.5)
-                    clean_assets["x_days"] = pd.to_numeric(clean_assets["x_days"], errors="coerce").fillna(20).astype(int)
-                    clean_assets["reopt_days"] = pd.to_numeric(clean_assets["reopt_days"], errors="coerce").fillna(5).astype(int)
-                    for note in init_notes:
-                        st.caption(note)
-                    primary = clean_assets.iloc[0]
-                    config.update(
-                        {
-                            "symbol": str(primary["symbol"]),
-                            "buy_rise_pct": float(primary["buy_rise_pct"]),
-                            "sell_drop_pct": float(primary["sell_drop_pct"]),
-                            "x_days": int(primary["x_days"]),
-                            "reopt_days": int(primary["reopt_days"]),
-                            "initial_cash": float(initial_cash),
-                            "alerts_enabled": bool(alerts_enabled),
-                            "assets": clean_assets.to_dict(orient="records"),
-                        }
+            edited_assets = st.data_editor(
+                assets_df,
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "symbol": st.column_config.TextColumn("Symbol", required=True),
+                    "buy_rise_pct": st.column_config.NumberColumn("Buy rise %", min_value=0.1, max_value=30.0, step=0.1),
+                    "sell_drop_pct": st.column_config.NumberColumn("Sell drop %", min_value=0.1, max_value=30.0, step=0.1),
+                    "x_days": st.column_config.NumberColumn("x days", min_value=5, max_value=365, step=1),
+                    "reopt_days": st.column_config.NumberColumn("reopt every N days", min_value=1, max_value=30, step=1),
+                    "enabled": st.column_config.CheckboxColumn("Run in live bot"),
+                    "reinit_params": st.column_config.CheckboxColumn("Re-init from 1Y data"),
+                },
+            )
+            with st.form("config_form"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    initial_cash = st.number_input(
+                        "Initial cash per asset",
+                        min_value=100.0,
+                        value=float(config.get("initial_cash", 1000.0)),
+                        step=100.0,
+                        help="Each enabled asset starts with this same amount.",
                     )
-                    write_json(CONFIG_PATH, config)
-                    ok, msg = commit_file_to_github(CONFIG_PATH, "Update trading config from dashboard")
-                    notify(ok, msg)
+                with c2:
+                    alerts_enabled = st.checkbox("Email alerts enabled", value=bool(config.get("alerts_enabled", True)))
+                save = st.form_submit_button("Save bot settings", use_container_width=True)
+                if save:
+                    clean_assets = edited_assets.copy()
+                    default_suffix = ""
+                    base_symbol = str(config.get("symbol", "")).strip().upper()
+                    if "." in base_symbol:
+                        default_suffix = "." + base_symbol.split(".", 1)[1]
+                    clean_assets["symbol"] = clean_assets["symbol"].apply(lambda v: normalize_symbol(v, default_suffix=default_suffix))
+                    clean_assets = clean_assets[clean_assets["symbol"] != ""]
+                    clean_assets["buy_rise_pct"] = pd.to_numeric(clean_assets["buy_rise_pct"], errors="coerce")
+                    clean_assets["sell_drop_pct"] = pd.to_numeric(clean_assets["sell_drop_pct"], errors="coerce")
+                    clean_assets["x_days"] = pd.to_numeric(clean_assets["x_days"], errors="coerce")
+                    clean_assets["reopt_days"] = pd.to_numeric(clean_assets["reopt_days"], errors="coerce")
+                    if "enabled" not in clean_assets.columns:
+                        clean_assets["enabled"] = True
+                    clean_assets["enabled"] = clean_assets["enabled"].fillna(True).astype(bool)
+                    if "reinit_params" not in clean_assets.columns:
+                        clean_assets["reinit_params"] = False
+                    clean_assets["reinit_params"] = clean_assets["reinit_params"].fillna(False).astype(bool)
+                    if clean_assets.empty:
+                        notify(False, "Add at least one asset before saving.")
+                    else:
+                        with st.spinner("Initializing missing parameters from 1Y hourly data..."):
+                            clean_assets, init_notes = initialize_asset_params(clean_assets, initial_cash=float(initial_cash))
+                        clean_assets["buy_rise_pct"] = pd.to_numeric(clean_assets["buy_rise_pct"], errors="coerce").fillna(1.0)
+                        clean_assets["sell_drop_pct"] = pd.to_numeric(clean_assets["sell_drop_pct"], errors="coerce").fillna(1.5)
+                        clean_assets["x_days"] = pd.to_numeric(clean_assets["x_days"], errors="coerce").fillna(20).astype(int)
+                        clean_assets["reopt_days"] = pd.to_numeric(clean_assets["reopt_days"], errors="coerce").fillna(5).astype(int)
+                        for note in init_notes:
+                            st.caption(note)
+                        primary = clean_assets.iloc[0]
+                        config.update(
+                            {
+                                "symbol": str(primary["symbol"]),
+                                "buy_rise_pct": float(primary["buy_rise_pct"]),
+                                "sell_drop_pct": float(primary["sell_drop_pct"]),
+                                "x_days": int(primary["x_days"]),
+                                "reopt_days": int(primary["reopt_days"]),
+                                "initial_cash": float(initial_cash),
+                                "alerts_enabled": bool(alerts_enabled),
+                                "assets": clean_assets.to_dict(orient="records"),
+                            }
+                        )
+                        write_json(CONFIG_PATH, config)
+                        ok, msg = commit_file_to_github(CONFIG_PATH, "Update trading config from dashboard")
+                        notify(ok, msg)
 
-        if st.button("Run check now"):
-            ok, msg = trigger_workflow()
-            notify(ok, msg)
-        st.caption("Manual pull: click `Run check now` here, or run the workflow manually in GitHub Actions.")
-
-        st.subheader("Latest pulled prices (all bot assets)")
-        if strategy_assets:
-            asset_states = state.get("assets", {})
-            rows: list[dict] = []
-            for asset in strategy_assets:
-                symbol = str(asset.get("symbol", "")).strip().upper()
-                if not symbol:
-                    continue
-                s = asset_states.get(symbol, {})
-                rows.append(
-                    {
-                        "symbol": symbol,
-                        "run_in_live_bot": bool(asset.get("enabled", True)),
-                        "last_price": float(s.get("last_price", 0.0)) if s.get("last_price") is not None else None,
-                        "pulled_at_local": format_timestamp_in_timezone(s.get("last_bar_at"), display_tz),
-                        "last_action": s.get("last_action", "N/A"),
-                    }
-                )
-            if rows:
-                prices_df = pd.DataFrame(rows).sort_values(["run_in_live_bot", "symbol"], ascending=[False, True])
-                st.dataframe(prices_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("No symbols available yet.")
-        else:
-            st.info("No bot assets configured yet. Add symbols above and save to initialize parameters.")
-
-        st.subheader("Per-asset Monitor")
-        if strategy_assets:
+        with right:
+            st.subheader("Manual Trigger")
+            if st.button("Run check now", use_container_width=True):
+                ok, msg = trigger_workflow()
+                notify(ok, msg)
+            st.caption("Triggers one immediate pull and signal run.")
+            st.markdown("---")
+            st.subheader("Selected Asset Monitor")
             monitor_symbols = [str(a.get("symbol", "")).upper() for a in strategy_assets if str(a.get("symbol", "")).strip()]
-            selected_symbol = st.selectbox("Select asset", options=monitor_symbols, key="monitor_symbol")
-            selected_cfg = next((a for a in strategy_assets if str(a.get("symbol", "")).upper() == selected_symbol), {})
-            asset_state = state.get("assets", {}).get(selected_symbol, {})
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Buy rise %", f"{float(selected_cfg.get('buy_rise_pct', 0.0)):.3f}")
-            m2.metric("Sell drop %", f"{float(selected_cfg.get('sell_drop_pct', 0.0)):.3f}")
-            m3.metric("x days", str(int(selected_cfg.get("x_days", 0))))
-            m4.metric("reopt every N days", str(int(selected_cfg.get("reopt_days", 0))))
-            st.caption(f"Last action: {asset_state.get('last_action', 'N/A')} | Last price: {asset_state.get('last_price', 'N/A')}")
+            if monitor_symbols:
+                selected_symbol = st.selectbox("Asset", options=monitor_symbols, key="monitor_symbol")
+                selected_cfg = next((a for a in strategy_assets if str(a.get("symbol", "")).upper() == selected_symbol), {})
+                asset_state = state.get("assets", {}).get(selected_symbol, {})
+                st.metric("Buy rise %", f"{float(selected_cfg.get('buy_rise_pct', 0.0)):.3f}")
+                st.metric("Sell drop %", f"{float(selected_cfg.get('sell_drop_pct', 0.0)):.3f}")
+                st.metric("x days", str(int(selected_cfg.get("x_days", 0))))
+                st.metric("Reopt every N days", str(int(selected_cfg.get("reopt_days", 0))))
+                st.caption(f"Last action: {asset_state.get('last_action', 'N/A')}")
+                st.caption(f"Last price: {asset_state.get('last_price', 'N/A')}")
+            else:
+                st.info("Add at least one asset to monitor.")
+
+    with snapshot_tab:
+        st.subheader("Live Price Snapshot")
+        price_snapshot = build_price_snapshot(strategy_assets, state, display_tz)
+        if price_snapshot.empty:
+            st.info("No symbols configured yet. Add assets in Bot Setup.")
         else:
-            st.info("No bot assets configured yet. Add symbols above and save to initialize parameters.")
+            st.dataframe(price_snapshot, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download snapshot CSV",
+                data=price_snapshot.to_csv(index=False).encode("utf-8"),
+                file_name="live_price_snapshot.csv",
+                mime="text/csv",
+            )
 
     with history_tab:
-        left, right = st.columns(2)
+        st.subheader("Execution History")
+        history_symbols = ["ALL"]
+        if not trades.empty and "symbol" in trades.columns:
+            history_symbols.extend(sorted(trades["symbol"].dropna().astype(str).unique().tolist()))
+        selected_history_symbol = st.selectbox("Filter by symbol", options=history_symbols, key="history_symbol_filter")
+        max_rows = st.slider("Rows", min_value=20, max_value=500, value=100, step=20)
+
+        trades_view = trades.copy()
+        params_view = params_hist.copy()
+        if selected_history_symbol != "ALL":
+            if "symbol" in trades_view.columns:
+                trades_view = trades_view[trades_view["symbol"].astype(str) == selected_history_symbol]
+            if "symbol" in params_view.columns:
+                params_view = params_view[params_view["symbol"].astype(str) == selected_history_symbol]
+
+        left, right = st.columns(2, gap="large")
         with left:
             st.subheader("Recent Trades")
-            st.dataframe(trades.tail(100), use_container_width=True, hide_index=True)
+            st.dataframe(trades_view.tail(max_rows), use_container_width=True, hide_index=True)
         with right:
             st.subheader("Recent Re-optimizations")
-            st.dataframe(params_hist.tail(100), use_container_width=True, hide_index=True)
+            st.dataframe(params_view.tail(max_rows), use_container_width=True, hide_index=True)
         st.subheader("Last Signal Reason")
         st.code(str(state.get("last_signal_reason", "No reason available")))
 
-    with overview_tab:
-        st.subheader("Strategy Equity Curve")
+    with performance_tab:
+        st.subheader("Performance Dashboard")
         if not equity.empty:
             equity["Datetime"] = pd.to_datetime(equity["Datetime"])
+            perf_symbols = ["ALL"]
+            if "symbol" in equity.columns:
+                perf_symbols.extend(sorted(equity["symbol"].dropna().astype(str).unique().tolist()))
+            selected_perf_symbol = st.selectbox("Equity symbol", options=perf_symbols, key="perf_symbol_filter")
+            eq_view = equity.copy()
+            if selected_perf_symbol != "ALL" and "symbol" in eq_view.columns:
+                eq_view = eq_view[eq_view["symbol"].astype(str) == selected_perf_symbol]
+
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=equity["Datetime"], y=equity["Portfolio_Value"], mode="lines", name="Portfolio Value"))
+            fig.add_trace(go.Scatter(x=eq_view["Datetime"], y=eq_view["Portfolio_Value"], mode="lines", name="Portfolio Value"))
             fig.update_layout(margin=dict(t=20, b=20, l=20, r=20))
             st.plotly_chart(fig, use_container_width=True)
+
+            latest_val = float(eq_view["Portfolio_Value"].iloc[-1]) if not eq_view.empty else 0.0
+            first_val = float(eq_view["Portfolio_Value"].iloc[0]) if not eq_view.empty else 0.0
+            pnl = latest_val - first_val
+            p1, p2, p3 = st.columns(3)
+            p1.metric("Latest Value", f"{latest_val:,.2f}")
+            p2.metric("Net P/L", f"{pnl:,.2f}")
+            p3.metric("Data Points", str(len(eq_view)))
         else:
             st.info("No equity data yet.")
 
-    with howto_tab:
-        st.subheader("How to use this dashboard")
+    with guide_tab:
+        st.subheader("Operator Guide")
         st.markdown(
             """
-            **Daily workflow**
-            1. Open **Bot (Automation)** and keep your automated asset list/settings up to date.
-            2. Click **Run check now** when you want to trigger a manual workflow run.
-            3. Use **History** to inspect recent trades and threshold re-optimizations.
-            4. Use **Overview** for high-level strategy performance visuals.
+            **Daily operating workflow**
+            1. Open **Bot Setup** and verify enabled assets + thresholds.
+            2. Click **Run check now** when you need an immediate run.
+            3. Open **Live Snapshot** to verify pulled prices and timestamps.
+            4. Use **History** to inspect trade and re-optimization outcomes.
+            5. Review **Performance** for equity trend and P/L.
 
             **Important behavior**
-            - Automated worker supports multiple enabled assets from the bot table.
-            - Every enabled bot asset uses the same initial cash amount (per-asset setting).
+            - Worker supports multiple enabled assets from the bot table.
+            - Every enabled asset uses the same initial cash amount (per-asset setting).
+            - `Re-init from 1Y data` is a one-time recalibration flag and resets after save.
             """
         )
 
