@@ -14,6 +14,14 @@
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
+    },
+    {
+      "symbol": "AAPL.TO",
+      "buy_rise_pct": 1.0,
+      "sell_drop_pct": 3.5,
+      "x_days": 20,
+      "reopt_days": 5,
+      "enabled": true
     }
   ]
 }
