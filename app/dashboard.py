@@ -258,11 +258,15 @@ def main() -> None:
         """
     )
 
-    c1, c2, c3, c4 = st.columns(4)
+    latest_pulled_price = float(state.get("last_price", 0.0))
+    latest_pulled_at_local = format_timestamp_in_timezone(state.get("last_bar_at"), display_tz)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Automation Assets", str(len([a for a in strategy_assets if a.get("enabled", True)])))
     c2.metric("Last Action", state.get("last_action", "N/A"))
     c3.metric("Strategy Value", f"{strategy_value:,.2f}")
-    c4.metric("Last Price", f"{float(state.get('last_price', 0.0)):.2f}")
+    c4.metric("Latest Pulled Price", f"{latest_pulled_price:.2f}")
+    c5.metric("Pulled At (local)", latest_pulled_at_local)
     st.caption(f"Raw UTC timestamp: {state.get('last_run_at', 'Never')}")
     st.caption(f"Last Run (local): {format_timestamp_in_timezone(state.get('last_run_at'), display_tz)}")
     st.info("Bot-only mode: this dashboard now focuses on automated signal configuration, monitoring, and logs.")
