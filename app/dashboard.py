@@ -142,6 +142,7 @@ def normalize_assets_from_config(config: dict) -> list[dict]:
                     "x_days": int(row.get("x_days", config.get("x_days", 20))),
                     "reopt_days": int(row.get("reopt_days", config.get("reopt_days", 5))),
                     "enabled": bool(row.get("enabled", True)),
+                    "reinit_params": bool(row.get("reinit_params", False)),
                 }
             )
         if out:
@@ -208,11 +209,12 @@ def initialize_asset_params(assets_df: pd.DataFrame, initial_cash: float) -> tup
         if not symbol:
             continue
 
+        force_reinit = bool(row.get("reinit_params", False))
         buy_missing = pd.isna(row.get("buy_rise_pct")) or float(row.get("buy_rise_pct", 0.0) or 0.0) <= 0
         sell_missing = pd.isna(row.get("sell_drop_pct")) or float(row.get("sell_drop_pct", 0.0) or 0.0) <= 0
         x_missing = pd.isna(row.get("x_days")) or int(row.get("x_days", 0) or 0) <= 0
         reopt_missing = pd.isna(row.get("reopt_days")) or int(row.get("reopt_days", 0) or 0) <= 0
-        if not (buy_missing or sell_missing or x_missing or reopt_missing):
+        if not (force_reinit or buy_missing or sell_missing or x_missing or reopt_missing):
             continue
 
         try:
@@ -221,13 +223,13 @@ def initialize_asset_params(assets_df: pd.DataFrame, initial_cash: float) -> tup
             if len(prices) < 2:
                 raise RuntimeError("insufficient hourly candles")
             best_buy, best_sell, _ = optimize_params(train_prices=prices, initial_cash=float(initial_cash))
-            if buy_missing:
+            if force_reinit or buy_missing:
                 out.at[idx, "buy_rise_pct"] = round(best_buy * 100.0, 3)
-            if sell_missing:
+            if force_reinit or sell_missing:
                 out.at[idx, "sell_drop_pct"] = round(best_sell * 100.0, 3)
-            if x_missing:
+            if force_reinit or x_missing:
                 out.at[idx, "x_days"] = 20
-            if reopt_missing:
+            if force_reinit or reopt_missing:
                 out.at[idx, "reopt_days"] = 5
             notes.append(f"{symbol}: initialized params from 1Y hourly data")
         except Exception as exc:  # noqa: BLE001
@@ -240,6 +242,7 @@ def initialize_asset_params(assets_df: pd.DataFrame, initial_cash: float) -> tup
             if reopt_missing:
                 out.at[idx, "reopt_days"] = 5
             notes.append(f"{symbol}: using defaults (data init failed: {exc})")
+        out.at[idx, "reinit_params"] = False
 
     return out, notes
 
@@ -305,7 +308,10 @@ def main() -> None:
         st.subheader("Bot Controls")
         st.caption("Use this page to configure automated signal checks and trigger runs.")
         st.caption("Ticker format uses Yahoo symbols (example: `ZSP.TO`, `AAPL`, `MSFT`).")
-        assets_df = pd.DataFrame(strategy_assets, columns=["symbol", "buy_rise_pct", "sell_drop_pct", "x_days", "reopt_days", "enabled"])
+        assets_df = pd.DataFrame(
+            strategy_assets,
+            columns=["symbol", "buy_rise_pct", "sell_drop_pct", "x_days", "reopt_days", "enabled", "reinit_params"],
+        )
         edited_assets = st.data_editor(
             assets_df,
             num_rows="dynamic",
@@ -318,6 +324,7 @@ def main() -> None:
                 "x_days": st.column_config.NumberColumn("x days", min_value=5, max_value=365, step=1),
                 "reopt_days": st.column_config.NumberColumn("reopt every N days", min_value=1, max_value=30, step=1),
                 "enabled": st.column_config.CheckboxColumn("Enabled"),
+                "reinit_params": st.column_config.CheckboxColumn("Re-init from 1Y data"),
             },
         )
         with st.form("config_form"):
@@ -345,6 +352,9 @@ def main() -> None:
                 if "enabled" not in clean_assets.columns:
                     clean_assets["enabled"] = True
                 clean_assets["enabled"] = clean_assets["enabled"].fillna(True).astype(bool)
+                if "reinit_params" not in clean_assets.columns:
+                    clean_assets["reinit_params"] = False
+                clean_assets["reinit_params"] = clean_assets["reinit_params"].fillna(False).astype(bool)
                 if clean_assets.empty:
                     notify(False, "Add at least one asset before saving.")
                 else:
