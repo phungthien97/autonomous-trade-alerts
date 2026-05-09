@@ -27,7 +27,6 @@ STATE_PATH = STATE_DIR / "state.json"
 TRADES_PATH = STATE_DIR / "trades.csv"
 EQUITY_PATH = STATE_DIR / "equity.csv"
 PARAMS_PATH = STATE_DIR / "params_history.csv"
-PORTFOLIO_PATH = STATE_DIR / "portfolio.json"
 
 
 def read_json(path: Path) -> dict:
@@ -108,22 +107,6 @@ def read_json_or_default(path: Path, default_value: dict) -> dict:
     if not path.exists():
         return default_value
     return read_json(path)
-
-
-def build_default_portfolio(config: dict, state: dict) -> dict:
-    return {
-        "cash": float(state.get("cash", 0.0)),
-        "positions": [
-            {
-                "symbol": str(config.get("symbol", "")).upper(),
-                "shares": float(state.get("shares", 0.0)),
-                "price": float(state.get("last_price", 0.0)),
-                "cost_basis": 0.0,
-                "notes": "Strategy position",
-            }
-        ],
-        "watchlist": [],
-    }
 
 
 def normalize_assets_from_config(config: dict) -> list[dict]:
@@ -262,46 +245,30 @@ def main() -> None:
     trades = read_csv_or_empty(TRADES_PATH)
     equity = read_csv_or_empty(EQUITY_PATH)
     params_hist = read_csv_or_empty(PARAMS_PATH)
-    portfolio = read_json_or_default(PORTFOLIO_PATH, build_default_portfolio(config=config, state=state))
     strategy_assets = normalize_assets_from_config(config)
 
-    positions_df = pd.DataFrame(portfolio.get("positions", []))
-    if positions_df.empty:
-        positions_df = pd.DataFrame(columns=["symbol", "shares", "price", "cost_basis", "notes"])
-    for col, default in [("symbol", ""), ("shares", 0.0), ("price", 0.0), ("cost_basis", 0.0), ("notes", "")]:
-        if col not in positions_df.columns:
-            positions_df[col] = default
-    positions_df["symbol"] = positions_df["symbol"].astype(str).str.upper().str.strip()
-    positions_df["shares"] = pd.to_numeric(positions_df["shares"], errors="coerce").fillna(0.0)
-    positions_df["price"] = pd.to_numeric(positions_df["price"], errors="coerce").fillna(0.0)
-    positions_df["cost_basis"] = pd.to_numeric(positions_df["cost_basis"], errors="coerce").fillna(0.0)
-    positions_df["market_value"] = positions_df["shares"] * positions_df["price"]
-    portfolio_cash = float(portfolio.get("cash", 0.0))
-    total_market_value = float(positions_df["market_value"].sum())
-    total_portfolio_value = portfolio_cash + total_market_value
-    strategy_value = float(state.get("cash", 0.0) + state.get("shares", 0.0) * state.get("last_price", 0.0))
+    strategy_value = float(state.get("portfolio_value", state.get("cash", 0.0) + state.get("shares", 0.0) * state.get("last_price", 0.0)))
 
     st.markdown(
         """
         **How this app is organized**
         - **Bot (Automation)**: configure and run automated signal checks.
-        - **Portfolio (Manual)**: track your real holdings/cash across many symbols.
         - **History**: review trade and re-optimization logs.
+        - **Overview**: monitor strategy-level metrics and performance.
         """
     )
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Automation Assets", str(len([a for a in strategy_assets if a.get("enabled", True)])))
     c2.metric("Last Action", state.get("last_action", "N/A"))
-    c3.metric("Tracked Portfolio", f"{total_portfolio_value:,.2f}")
-    c4.metric("Strategy Value", f"{strategy_value:,.2f}")
-    c5.metric("Open Positions", str(int((positions_df["shares"] > 0).sum())))
+    c3.metric("Strategy Value", f"{strategy_value:,.2f}")
+    c4.metric("Last Price", f"{float(state.get('last_price', 0.0)):.2f}")
     st.caption(f"Raw UTC timestamp: {state.get('last_run_at', 'Never')}")
     st.caption(f"Last Run (local): {format_timestamp_in_timezone(state.get('last_run_at'), display_tz)}")
-    st.info("Automation and portfolio tracking are separate: bot settings control alerts, while portfolio values are manually editable for your real account view.")
+    st.info("Bot-only mode: this dashboard now focuses on automated signal configuration, monitoring, and logs.")
 
-    bot_tab, portfolio_tab, history_tab, overview_tab, howto_tab = st.tabs(
-        ["Bot (Automation)", "Portfolio (Manual)", "History", "Overview", "How To"]
+    bot_tab, history_tab, overview_tab, howto_tab = st.tabs(
+        ["Bot (Automation)", "History", "Overview", "How To"]
     )
 
     with bot_tab:
@@ -402,48 +369,6 @@ def main() -> None:
         else:
             st.info("No bot assets configured yet. Add symbols above and save to initialize parameters.")
 
-    with portfolio_tab:
-        st.subheader("Portfolio Manager")
-        st.caption("Use this page as your manual account tracker (cash + holdings).")
-        portfolio_cash_input = st.number_input("Cash Balance", min_value=0.0, value=portfolio_cash, step=100.0)
-        editor_df = positions_df[["symbol", "shares", "price", "cost_basis", "notes"]].copy()
-        edited_positions = st.data_editor(
-            editor_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "symbol": st.column_config.TextColumn("Symbol", required=True),
-                "shares": st.column_config.NumberColumn("Shares", min_value=0.0, step=0.01),
-                "price": st.column_config.NumberColumn("Price", min_value=0.0, step=0.01),
-                "cost_basis": st.column_config.NumberColumn("Avg Cost", min_value=0.0, step=0.01),
-                "notes": st.column_config.TextColumn("Notes"),
-            },
-        )
-        watchlist_text = st.text_input(
-            "Watchlist symbols (comma-separated)",
-            value=", ".join(portfolio.get("watchlist", [])),
-            help="Example: SPY, QQQ, AAPL, MSFT",
-        )
-        if st.button("Save portfolio"):
-            clean_df = edited_positions.copy()
-            clean_df["symbol"] = clean_df["symbol"].apply(normalize_symbol)
-            clean_df = clean_df[clean_df["symbol"] != ""]
-            clean_df["shares"] = pd.to_numeric(clean_df["shares"], errors="coerce").fillna(0.0)
-            clean_df["price"] = pd.to_numeric(clean_df["price"], errors="coerce").fillna(0.0)
-            clean_df["cost_basis"] = pd.to_numeric(clean_df["cost_basis"], errors="coerce").fillna(0.0)
-            clean_df["notes"] = clean_df["notes"].fillna("").astype(str)
-            watchlist = [s.strip().upper() for s in watchlist_text.split(",") if s.strip()]
-            portfolio = {
-                "cash": float(portfolio_cash_input),
-                "positions": clean_df[["symbol", "shares", "price", "cost_basis", "notes"]].to_dict(orient="records"),
-                "watchlist": watchlist,
-            }
-            write_json(PORTFOLIO_PATH, portfolio)
-            ok, msg = commit_file_to_github(PORTFOLIO_PATH, "Update portfolio from dashboard")
-            notify(ok, msg)
-            st.rerun()
-
     with history_tab:
         left, right = st.columns(2)
         with left:
@@ -456,25 +381,6 @@ def main() -> None:
         st.code(str(state.get("last_signal_reason", "No reason available")))
 
     with overview_tab:
-        st.subheader("Portfolio Allocation")
-        alloc_df = positions_df[positions_df["market_value"] > 0].copy()
-        if not alloc_df.empty and total_market_value > 0:
-            alloc_df["weight_pct"] = (alloc_df["market_value"] / total_market_value) * 100.0
-            pie = go.Figure(
-                data=[
-                    go.Pie(
-                        labels=alloc_df["symbol"],
-                        values=alloc_df["market_value"],
-                        hole=0.45,
-                        textinfo="label+percent",
-                    )
-                ]
-            )
-            pie.update_layout(margin=dict(t=20, b=20, l=20, r=20))
-            st.plotly_chart(pie, use_container_width=True)
-        else:
-            st.info("No active positions yet. Add holdings in Portfolio Manager.")
-
         st.subheader("Strategy Equity Curve")
         if not equity.empty:
             equity["Datetime"] = pd.to_datetime(equity["Datetime"])
@@ -485,10 +391,6 @@ def main() -> None:
         else:
             st.info("No equity data yet.")
 
-        st.subheader("Current Holdings")
-        holdings_view = positions_df[["symbol", "shares", "price", "market_value", "cost_basis", "notes"]].copy()
-        st.dataframe(holdings_view.sort_values("market_value", ascending=False), use_container_width=True, hide_index=True)
-
     with howto_tab:
         st.subheader("How to use this dashboard")
         st.markdown(
@@ -496,12 +398,10 @@ def main() -> None:
             **Daily workflow**
             1. Open **Bot (Automation)** and keep your automated asset list/settings up to date.
             2. Click **Run check now** when you want to trigger a manual workflow run.
-            3. Use **Portfolio (Manual)** to maintain cash and holdings for your real account view.
-            4. Use **History** to inspect recent trades and threshold re-optimizations.
-            5. Use **Overview** for high-level visuals and allocation.
+            3. Use **History** to inspect recent trades and threshold re-optimizations.
+            4. Use **Overview** for high-level strategy performance visuals.
 
             **Important behavior**
-            - The bot and manual portfolio tracker are separate so you can compare model vs real holdings.
             - Automated worker supports multiple enabled assets from the bot table.
             - Every enabled bot asset uses the same initial cash amount (per-asset setting).
             """
