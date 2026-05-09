@@ -175,12 +175,10 @@ def notify(ok: bool, msg: str) -> None:
     st.session_state["dashboard_notice"] = {"ok": bool(ok), "msg": str(msg)}
 
 
-def normalize_symbol(raw_value: object, default_suffix: str = "") -> str:
+def normalize_symbol(raw_value: object) -> str:
     symbol = str(raw_value or "").strip().upper()
     if symbol in {"", "NONE", "NAN"}:
         return ""
-    if "." not in symbol and default_suffix:
-        return f"{symbol}{default_suffix}"
     return symbol
 
 
@@ -402,11 +400,7 @@ def main() -> None:
                 save = st.form_submit_button("Save bot settings", use_container_width=True)
                 if save:
                     clean_assets = edited_assets.copy()
-                    default_suffix = ""
-                    base_symbol = str(config.get("symbol", "")).strip().upper()
-                    if "." in base_symbol:
-                        default_suffix = "." + base_symbol.split(".", 1)[1]
-                    clean_assets["symbol"] = clean_assets["symbol"].apply(lambda v: normalize_symbol(v, default_suffix=default_suffix))
+                    clean_assets["symbol"] = clean_assets["symbol"].apply(normalize_symbol)
                     clean_assets = clean_assets[clean_assets["symbol"] != ""]
                     clean_assets["buy_rise_pct"] = pd.to_numeric(clean_assets["buy_rise_pct"], errors="coerce")
                     clean_assets["sell_drop_pct"] = pd.to_numeric(clean_assets["sell_drop_pct"], errors="coerce")

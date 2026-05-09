@@ -151,7 +151,15 @@ def run_once() -> None:
         )
         state["assets"][symbol] = asset_state
 
-        recent_df = download_hourly(symbol=symbol, start=str(start), end=end)
+        try:
+            recent_df = download_hourly(symbol=symbol, start=str(start), end=end)
+        except Exception as exc:  # noqa: BLE001
+            # Skip invalid/delisted symbols instead of failing entire workflow.
+            asset_state["last_action"] = "SKIP"
+            asset_state["last_signal_reason"] = f"Data unavailable: {exc}"
+            last_actions.append(f"{symbol}:ERROR")
+            print(f"skip_symbol={symbol} reason={exc}")
+            continue
         latest = recent_df.iloc[-1]
         latest_dt = pd.Timestamp(latest["Datetime"])
         latest_price = float(latest["Close"])
