@@ -6,7 +6,7 @@
   "last_price": 110.76000213623047,
   "last_action": "HOLD",
   "last_signal_reason": "No signal",
-  "last_run_at": "2026-05-09T03:20:05.733803Z",
+  "last_run_at": "2026-05-09T03:23:36.628076Z",
   "last_bar_at": "2026-05-08T19:30:00+00:00",
   "last_reopt_at": "2026-05-08T02:46:48.863879Z",
   "assets": {
@@ -21,7 +21,19 @@
       "last_bar_at": "2026-05-08T19:30:00+00:00",
       "last_reopt_at": "2026-05-08T02:46:48.863879Z",
       "initial_cash": 1000.0
+    },
+    "AAPL.TO": {
+      "cash": 0.0,
+      "shares": 24.038462420187084,
+      "peak": 41.599998474121094,
+      "trough": null,
+      "last_price": 41.599998474121094,
+      "last_action": "HOLD",
+      "last_signal_reason": "No signal",
+      "last_bar_at": "2026-05-08T19:30:00+00:00",
+      "last_reopt_at": "2026-05-09T03:23:36.628076Z",
+      "initial_cash": 1000.0
     }
   },
-  "portfolio_value": 1009.4786812245416
+  "portfolio_value": 2009.4786812245416
 }

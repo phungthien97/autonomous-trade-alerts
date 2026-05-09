@@ -13,17 +13,15 @@
       "sell_drop_pct": 1.5,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true,
-      "reinit_params": false
+      "enabled": true
     },
     {
       "symbol": "AAPL.TO",
-      "buy_rise_pct": 2.0,
-      "sell_drop_pct": 9.0,
+      "buy_rise_pct": 1.0,
+      "sell_drop_pct": 3.5,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true,
-      "reinit_params": false
+      "enabled": true
     }
   ]
 }
