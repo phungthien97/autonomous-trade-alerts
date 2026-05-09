@@ -338,10 +338,10 @@ def main() -> None:
                     default_suffix = "." + base_symbol.split(".", 1)[1]
                 clean_assets["symbol"] = clean_assets["symbol"].apply(lambda v: normalize_symbol(v, default_suffix=default_suffix))
                 clean_assets = clean_assets[clean_assets["symbol"] != ""]
-                clean_assets["buy_rise_pct"] = pd.to_numeric(clean_assets["buy_rise_pct"], errors="coerce").fillna(1.0)
-                clean_assets["sell_drop_pct"] = pd.to_numeric(clean_assets["sell_drop_pct"], errors="coerce").fillna(1.5)
-                clean_assets["x_days"] = pd.to_numeric(clean_assets["x_days"], errors="coerce").fillna(20).astype(int)
-                clean_assets["reopt_days"] = pd.to_numeric(clean_assets["reopt_days"], errors="coerce").fillna(5).astype(int)
+                clean_assets["buy_rise_pct"] = pd.to_numeric(clean_assets["buy_rise_pct"], errors="coerce")
+                clean_assets["sell_drop_pct"] = pd.to_numeric(clean_assets["sell_drop_pct"], errors="coerce")
+                clean_assets["x_days"] = pd.to_numeric(clean_assets["x_days"], errors="coerce")
+                clean_assets["reopt_days"] = pd.to_numeric(clean_assets["reopt_days"], errors="coerce")
                 if "enabled" not in clean_assets.columns:
                     clean_assets["enabled"] = True
                 clean_assets["enabled"] = clean_assets["enabled"].fillna(True).astype(bool)
@@ -350,6 +350,10 @@ def main() -> None:
                 else:
                     with st.spinner("Initializing missing parameters from 1Y hourly data..."):
                         clean_assets, init_notes = initialize_asset_params(clean_assets, initial_cash=float(initial_cash))
+                    clean_assets["buy_rise_pct"] = pd.to_numeric(clean_assets["buy_rise_pct"], errors="coerce").fillna(1.0)
+                    clean_assets["sell_drop_pct"] = pd.to_numeric(clean_assets["sell_drop_pct"], errors="coerce").fillna(1.5)
+                    clean_assets["x_days"] = pd.to_numeric(clean_assets["x_days"], errors="coerce").fillna(20).astype(int)
+                    clean_assets["reopt_days"] = pd.to_numeric(clean_assets["reopt_days"], errors="coerce").fillna(5).astype(int)
                     for note in init_notes:
                         st.caption(note)
                     primary = clean_assets.iloc[0]
