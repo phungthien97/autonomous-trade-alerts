@@ -384,7 +384,7 @@ def main() -> None:
     ).strip()
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Run Status")
-    st.sidebar.caption("Worker schedule: every 10 minutes, Monday-Friday.")
+    st.sidebar.caption("Worker schedule: every 10 minutes, every day (including weekends).")
     st.sidebar.caption("Need an immediate pull? Use `Run check now` in Bot Setup.")
 
     config = read_json(CONFIG_PATH)
