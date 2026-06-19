@@ -6,19 +6,19 @@
   "last_price": 297.2001,
   "last_action": "HOLD",
   "last_signal_reason": "No signal",
-  "last_run_at": "2026-06-19T18:19:20.353343Z",
+  "last_run_at": "2026-06-19T20:11:29.762192Z",
   "last_bar_at": "2026-06-18T23:00:00+00:00",
   "last_reopt_at": "2026-06-15T13:41:47.416482Z",
   "assets": {
     "ZSP.TO": {
       "cash": 0.0,
       "shares": 9.033438461826789,
-      "peak": 116.5999984741211,
+      "peak": 116.62999725341797,
       "trough": null,
-      "last_price": 116.53500366210938,
+      "last_price": 116.62999725341797,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-06-19T17:30:00+00:00",
+      "last_bar_at": "2026-06-19T19:30:00+00:00",
       "last_reopt_at": "2026-06-15T13:41:47.416482Z",
       "initial_cash": 1000.0
     },
@@ -107,5 +107,5 @@
       "initial_cash": 1000.0
     }
   },
-  "portfolio_value": 7370.417414495586
+  "portfolio_value": 7371.27553325694
 }
