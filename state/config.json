@@ -9,8 +9,8 @@
   "assets": [
     {
       "symbol": "AAPL",
-      "buy_rise_pct": 4.0,
-      "sell_drop_pct": 1.0,
+      "buy_rise_pct": 1.0,
+      "sell_drop_pct": 3.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
@@ -25,15 +25,15 @@
     },
     {
       "symbol": "GOOG",
-      "buy_rise_pct": 5.5,
-      "sell_drop_pct": 1.0,
+      "buy_rise_pct": 4.5,
+      "sell_drop_pct": 2.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
     },
     {
       "symbol": "MSFT",
-      "buy_rise_pct": 1.0,
+      "buy_rise_pct": 2.5,
       "sell_drop_pct": 1.0,
       "x_days": 20,
       "reopt_days": 5,
@@ -41,8 +41,8 @@
     },
     {
       "symbol": "NVDA",
-      "buy_rise_pct": 1.0,
-      "sell_drop_pct": 1.5,
+      "buy_rise_pct": 8.0,
+      "sell_drop_pct": 1.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
