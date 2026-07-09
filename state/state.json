@@ -3,11 +3,11 @@
   "shares": 3.6828190172370174,
   "peak": 315.8603,
   "trough": null,
-  "last_price": 315.74,
+  "last_price": 315.5352,
   "last_action": "HOLD",
   "last_signal_reason": "No signal",
-  "last_run_at": "2026-07-09T21:52:16.424960Z",
-  "last_bar_at": "2026-07-09T21:00:00+00:00",
+  "last_run_at": "2026-07-09T23:18:24.889107Z",
+  "last_bar_at": "2026-07-09T23:00:00+00:00",
   "last_reopt_at": "2026-07-06T11:41:22.379002Z",
   "assets": {
     "ZSP.TO": {
@@ -39,10 +39,10 @@
       "shares": 3.6828190172370174,
       "peak": 315.8603,
       "trough": null,
-      "last_price": 315.74,
+      "last_price": 315.5352,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-07-09T21:00:00+00:00",
+      "last_bar_at": "2026-07-09T23:00:00+00:00",
       "last_reopt_at": "2026-07-06T11:41:22.379002Z",
       "initial_cash": 1000.0
     },
@@ -51,10 +51,10 @@
       "shares": 0.0,
       "peak": null,
       "trough": 546.25,
-      "last_price": 546.72,
+      "last_price": 546.75,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-07-09T21:00:00+00:00",
+      "last_bar_at": "2026-07-09T23:00:00+00:00",
       "last_reopt_at": "2026-07-06T11:41:22.379002Z",
       "initial_cash": 1000.0
     },
@@ -63,10 +63,10 @@
       "shares": 0.0,
       "peak": null,
       "trough": 350.7149963378906,
-      "last_price": 355.92,
+      "last_price": 354.9,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-07-09T21:00:00+00:00",
+      "last_bar_at": "2026-07-09T23:00:00+00:00",
       "last_reopt_at": "2026-07-06T11:41:22.379002Z",
       "initial_cash": 1000.0
     },
@@ -75,10 +75,10 @@
       "shares": 2.7657444769821575,
       "peak": 384.59,
       "trough": null,
-      "last_price": 383.95,
+      "last_price": 384.0,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-07-09T21:00:00+00:00",
+      "last_bar_at": "2026-07-09T23:00:00+00:00",
       "last_reopt_at": "2026-07-06T11:41:22.379002Z",
       "initial_cash": 1000.0
     },
@@ -87,10 +87,10 @@
       "shares": 0.0,
       "peak": null,
       "trough": 191.2,
-      "last_price": 202.7,
+      "last_price": 202.5,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-07-09T21:00:00+00:00",
+      "last_bar_at": "2026-07-09T23:00:00+00:00",
       "last_reopt_at": "2026-07-06T11:41:22.379002Z",
       "initial_cash": 1000.0
     },
@@ -99,13 +99,13 @@
       "shares": 0.0,
       "peak": null,
       "trough": 608.01,
-      "last_price": 608.3,
+      "last_price": 608.62,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-07-09T21:00:00+00:00",
+      "last_bar_at": "2026-07-09T23:00:00+00:00",
       "last_reopt_at": "2026-07-06T11:41:22.379002Z",
       "initial_cash": 1000.0
     }
   },
-  "portfolio_value": 7553.951013434029
+  "portfolio_value": 7553.335059323148
 }
