@@ -118,3 +118,4 @@ Datetime,Action,Price,Shares_After,Cash_After,Portfolio_Value,buy_rise_pct,sell_
 2026-07-09T17:30:00+00:00,BUY,380.989990234375,2.765744476982157,0.0,1053.7209612762088,1.0,1.0,Price rose from rolling trough threshold,MSFT
 2026-07-09T20:00:00+00:00,SELL,546.25,0.0,1257.624816086097,1257.624816086097,1.0,1.5,Price dropped from rolling peak threshold,AMD
 2026-07-09T20:00:00+00:00,SELL,608.01,0.0,1161.333463773821,1161.333463773821,1.0,1.0,Price dropped from rolling peak threshold,SMH
+2026-07-10T13:30:00+00:00,BUY,554.5599975585938,2.2677885560132185,0.0,1257.6248160860973,1.0,1.5,Price rose from rolling trough threshold,AMD
