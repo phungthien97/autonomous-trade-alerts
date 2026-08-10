@@ -3,12 +3,12 @@
   "shares": 3.367776109931412,
   "peak": 314.2799987792969,
   "trough": null,
-  "last_price": 313.23,
+  "last_price": 313.15,
   "last_action": "HOLD",
   "last_signal_reason": "No signal",
-  "last_run_at": "2026-08-07T23:26:15.306675Z",
-  "last_bar_at": "2026-08-07T23:00:00+00:00",
-  "last_reopt_at": "2026-08-03T08:35:20.435645Z",
+  "last_run_at": "2026-08-10T08:53:56.162221Z",
+  "last_bar_at": "2026-08-10T08:00:00+00:00",
+  "last_reopt_at": "2026-08-10T08:53:56.162221Z",
   "assets": {
     "ZSP.TO": {
       "cash": 0.0,
@@ -39,11 +39,11 @@
       "shares": 3.367776109931412,
       "peak": 314.2799987792969,
       "trough": null,
-      "last_price": 313.23,
+      "last_price": 313.15,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-08-07T23:00:00+00:00",
-      "last_reopt_at": "2026-08-03T08:35:20.435645Z",
+      "last_bar_at": "2026-08-10T08:00:00+00:00",
+      "last_reopt_at": "2026-08-10T08:53:56.162221Z",
       "initial_cash": 1000.0
     },
     "AMD": {
@@ -51,11 +51,11 @@
       "shares": 0.0,
       "peak": null,
       "trough": 477.2349853515625,
-      "last_price": 482.6767,
+      "last_price": 487.5,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-08-07T23:00:00+00:00",
-      "last_reopt_at": "2026-08-03T08:35:20.435645Z",
+      "last_bar_at": "2026-08-10T08:00:00+00:00",
+      "last_reopt_at": "2026-08-10T08:53:56.162221Z",
       "initial_cash": 1000.0
     },
     "GOOG": {
@@ -63,11 +63,11 @@
       "shares": 0.0,
       "peak": null,
       "trough": 353.45,
-      "last_price": 353.45,
+      "last_price": 355.5,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-08-07T23:00:00+00:00",
-      "last_reopt_at": "2026-08-03T08:35:20.435645Z",
+      "last_bar_at": "2026-08-10T08:00:00+00:00",
+      "last_reopt_at": "2026-08-10T08:53:56.162221Z",
       "initial_cash": 1000.0
     },
     "MSFT": {
@@ -75,37 +75,37 @@
       "shares": 2.795510932407915,
       "peak": 503.3900146484375,
       "trough": null,
-      "last_price": 499.5,
+      "last_price": 498.2103,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-08-07T23:00:00+00:00",
-      "last_reopt_at": "2026-08-03T08:35:20.435645Z",
+      "last_bar_at": "2026-08-10T08:00:00+00:00",
+      "last_reopt_at": "2026-08-10T08:53:56.162221Z",
       "initial_cash": 1000.0
     },
     "NVDA": {
       "cash": 0.0,
       "shares": 4.147168648726234,
-      "peak": 224.34609985351562,
+      "peak": 225.08,
       "trough": null,
-      "last_price": 223.5587,
+      "last_price": 225.08,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-08-07T23:00:00+00:00",
-      "last_reopt_at": "2026-08-03T08:35:20.435645Z",
+      "last_bar_at": "2026-08-10T08:00:00+00:00",
+      "last_reopt_at": "2026-08-10T08:53:56.162221Z",
       "initial_cash": 1000.0
     },
     "SMH": {
       "cash": 0.0,
       "shares": 1.9408176058960351,
-      "peak": 582.9000244140625,
+      "peak": 589.35,
       "trough": null,
-      "last_price": 582.1099,
+      "last_price": 589.35,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-08-07T23:00:00+00:00",
-      "last_reopt_at": "2026-08-03T08:35:20.435645Z",
+      "last_bar_at": "2026-08-10T08:00:00+00:00",
+      "last_reopt_at": "2026-08-10T08:53:56.162221Z",
       "initial_cash": 1000.0
     }
   },
-  "portfolio_value": 7587.694711320206
+  "portfolio_value": 7604.180719995641
 }
