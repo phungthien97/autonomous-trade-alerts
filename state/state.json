@@ -6,7 +6,7 @@
   "last_price": 316.4200134277344,
   "last_action": "HOLD",
   "last_signal_reason": "No signal",
-  "last_run_at": "2026-08-19T14:40:47.368143Z",
+  "last_run_at": "2026-08-19T15:15:59.337159Z",
   "last_bar_at": "2026-08-19T14:30:00+00:00",
   "last_reopt_at": "2026-08-17T08:55:07.969936Z",
   "assets": {
@@ -99,10 +99,10 @@
       "shares": 0.0,
       "peak": null,
       "trough": 561.6074829101562,
-      "last_price": 563.75,
+      "last_price": 562.8099975585938,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-08-19T14:30:00+00:00",
+      "last_bar_at": "2026-08-19T15:16:00+00:00",
       "last_reopt_at": "2026-08-17T08:55:07.969936Z",
       "initial_cash": 1000.0
     }
