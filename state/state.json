@@ -6,7 +6,7 @@
   "last_price": 316.4512,
   "last_action": "HOLD",
   "last_signal_reason": "No signal",
-  "last_run_at": "2026-08-19T21:12:38.803970Z",
+  "last_run_at": "2026-08-19T21:45:12.662666Z",
   "last_bar_at": "2026-08-19T21:00:00+00:00",
   "last_reopt_at": "2026-08-17T08:55:07.969936Z",
   "assets": {
@@ -59,14 +59,14 @@
       "initial_cash": 1000.0
     },
     "GOOG": {
-      "cash": 973.3769297471216,
-      "shares": 0.0,
-      "peak": null,
-      "trough": 329.8079,
-      "last_price": 329.8079,
-      "last_action": "HOLD",
-      "last_signal_reason": "No signal",
-      "last_bar_at": "2026-08-19T21:00:00+00:00",
+      "cash": 0.0,
+      "shares": 2.8523866073175723,
+      "peak": 341.25,
+      "trough": null,
+      "last_price": 341.25,
+      "last_action": "BUY",
+      "last_signal_reason": "Price rose from rolling trough threshold",
+      "last_bar_at": "2026-08-19T21:45:00+00:00",
       "last_reopt_at": "2026-08-17T08:55:07.969936Z",
       "initial_cash": 1000.0
     },
