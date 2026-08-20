@@ -3,11 +3,11 @@
   "shares": 3.3553331423229436,
   "peak": 318.1300048828125,
   "trough": null,
-  "last_price": 317.1700134277344,
+  "last_price": 317.2850036621094,
   "last_action": "HOLD",
   "last_signal_reason": "No signal",
-  "last_run_at": "2026-08-20T16:43:38.817623Z",
-  "last_bar_at": "2026-08-20T16:30:00+00:00",
+  "last_run_at": "2026-08-20T17:15:04.184492Z",
+  "last_bar_at": "2026-08-20T17:15:00+00:00",
   "last_reopt_at": "2026-08-17T08:55:07.969936Z",
   "assets": {
     "ZSP.TO": {
@@ -39,10 +39,10 @@
       "shares": 3.3553331423229436,
       "peak": 318.1300048828125,
       "trough": null,
-      "last_price": 317.1700134277344,
+      "last_price": 317.2850036621094,
       "last_action": "HOLD",
       "last_signal_reason": "No signal",
-      "last_bar_at": "2026-08-20T16:30:00+00:00",
+      "last_bar_at": "2026-08-20T17:15:00+00:00",
       "last_reopt_at": "2026-08-17T08:55:07.969936Z",
       "initial_cash": 1000.0
     },
@@ -107,5 +107,5 @@
       "initial_cash": 1000.0
     }
   },
-  "portfolio_value": 7336.775433259262
+  "portfolio_value": 7337.161263803703
 }
