@@ -15,19 +15,15 @@ import streamlit as st
 import yfinance as yf
 try:
     from app.data import download_hourly, hourly_limit_start_date
+    from app.paths import StatePaths
     from app.strategy import optimize_params
 except ModuleNotFoundError:
     from data import download_hourly, hourly_limit_start_date
+    from paths import StatePaths
     from strategy import optimize_params
 
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE_DIR = ROOT / "state"
-CONFIG_PATH = STATE_DIR / "config.json"
-STATE_PATH = STATE_DIR / "state.json"
-TRADES_PATH = STATE_DIR / "trades.csv"
-EQUITY_PATH = STATE_DIR / "equity.csv"
-PARAMS_PATH = STATE_DIR / "params_history.csv"
 
 
 def read_json(path: Path) -> dict:
@@ -367,6 +363,49 @@ def get_symbol_currency(symbol: str) -> str:
     return "USD?"
 
 
+def build_compare_table(initial_cash: float) -> pd.DataFrame:
+    rows: list[dict] = []
+    for version in ("v1", "v2"):
+        paths = StatePaths(version=version, project_root=ROOT)
+        config = read_json_or_default(paths.config_path, {"initial_cash": initial_cash, "assets": []})
+        equity = read_csv_or_empty(paths.equity_path)
+        symbols = [
+            str(a.get("symbol", "")).upper()
+            for a in config.get("assets", [])
+            if a.get("enabled", True) and str(a.get("symbol", "")).strip()
+        ]
+        per_asset = float(config.get("initial_cash", initial_cash))
+        for symbol in symbols:
+            sym_eq = equity[equity["symbol"].astype(str) == symbol] if not equity.empty and "symbol" in equity.columns else pd.DataFrame()
+            if sym_eq.empty:
+                ret_pct = 0.0
+                latest = per_asset
+            else:
+                sym_eq = sym_eq.sort_values("Datetime")
+                latest = float(sym_eq.iloc[-1]["Portfolio_Value"])
+                ret_pct = (latest / per_asset - 1.0) * 100.0
+            rows.append({"version": version.upper(), "symbol": symbol, "latest_value": latest, "return_pct": ret_pct})
+    if not rows:
+        return pd.DataFrame(columns=["version", "symbol", "latest_value", "return_pct"])
+    return pd.DataFrame(rows)
+
+
+def portfolio_return_since_start(equity: pd.DataFrame, initial_cash: float, symbols: list[str]) -> float:
+    if equity.empty or not symbols:
+        return 0.0
+    total_latest = 0.0
+    for symbol in symbols:
+        sym_eq = equity[equity["symbol"].astype(str) == symbol] if "symbol" in equity.columns else equity
+        if sym_eq.empty:
+            total_latest += initial_cash
+        else:
+            total_latest += float(sym_eq.sort_values("Datetime").iloc[-1]["Portfolio_Value"])
+    invested = initial_cash * len(symbols)
+    if invested <= 0:
+        return 0.0
+    return (total_latest / invested - 1.0) * 100.0
+
+
 def main() -> None:
     st.set_page_config(page_title="Autonomous Trade Alert Dashboard", layout="wide")
     inject_styles()
@@ -382,22 +421,24 @@ def main() -> None:
         value=os.getenv("DASHBOARD_TIMEZONE", "America/Toronto"),
         help="Use an IANA timezone like America/Toronto, America/New_York, or Asia/Ho_Chi_Minh.",
     ).strip()
+    version = st.sidebar.selectbox("Version", options=["v1", "v2"], index=0)
+    paths = StatePaths(version=version, project_root=ROOT)
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Run Status")
     st.sidebar.caption("Worker schedule: every 10 minutes, every day (including weekends).")
     st.sidebar.caption("Need an immediate pull? Use `Run check now` in Bot Setup.")
 
-    config = read_json(CONFIG_PATH)
-    state = read_json(STATE_PATH)
-    remote_state = read_json_from_github("state/state.json")
+    config = read_json(paths.config_path)
+    state = read_json(paths.state_path)
+    remote_state = read_json_from_github(f"{'state' if version == 'v1' else 'state_v2'}/state.json")
     if isinstance(remote_state, dict):
         local_run = pd.to_datetime(state.get("last_run_at"), utc=True, errors="coerce")
         remote_run = pd.to_datetime(remote_state.get("last_run_at"), utc=True, errors="coerce")
         if pd.notna(remote_run) and (pd.isna(local_run) or remote_run >= local_run):
             state = remote_state
-    trades = read_csv_or_empty(TRADES_PATH)
-    equity = read_csv_or_empty(EQUITY_PATH)
-    params_hist = read_csv_or_empty(PARAMS_PATH)
+    trades = read_csv_or_empty(paths.trades_path)
+    equity = read_csv_or_empty(paths.equity_path)
+    params_hist = read_csv_or_empty(paths.params_path)
     strategy_assets = normalize_assets_from_config(config)
 
     st.markdown(
@@ -415,8 +456,8 @@ def main() -> None:
     s3.markdown(f"**Enabled Assets**  \n`{len([a for a in strategy_assets if a.get('enabled', True)])}`")
     st.caption("Data mode: Regular + Extended Hours (pre/post-market included when available).")
 
-    bot_tab, snapshot_tab, history_tab, performance_tab, guide_tab = st.tabs(
-        ["Bot Setup", "Live Snapshot", "History", "Performance", "Guide"]
+    bot_tab, snapshot_tab, history_tab, performance_tab, compare_tab, guide_tab = st.tabs(
+        ["Bot Setup", "Live Snapshot", "History", "Performance", "Compare", "Guide"]
     )
 
     with bot_tab:
@@ -494,8 +535,8 @@ def main() -> None:
                                 "assets": clean_assets.to_dict(orient="records"),
                             }
                         )
-                        write_json(CONFIG_PATH, config)
-                        ok, msg = commit_file_to_github(CONFIG_PATH, "Update trading config from dashboard")
+                        write_json(paths.config_path, config)
+                        ok, msg = commit_file_to_github(paths.config_path, f"Update {version} trading config from dashboard")
                         notify(ok, msg)
 
         with right:
@@ -600,6 +641,29 @@ def main() -> None:
             p3.metric("Data Points", str(len(eq_view)))
         else:
             st.info("No equity data yet.")
+
+    with compare_tab:
+        st.subheader("V1 vs V2 Comparison")
+        initial_cash = float(config.get("initial_cash", 1000.0))
+        symbols = [
+            str(a.get("symbol", "")).upper()
+            for a in strategy_assets
+            if a.get("enabled", True) and str(a.get("symbol", "")).strip()
+        ]
+        v1_equity = read_csv_or_empty(StatePaths("v1", project_root=ROOT).equity_path)
+        v2_equity = read_csv_or_empty(StatePaths("v2", project_root=ROOT).equity_path)
+        v1_ret = portfolio_return_since_start(v1_equity, initial_cash, symbols)
+        v2_ret = portfolio_return_since_start(v2_equity, initial_cash, symbols)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("V1 portfolio return", f"{v1_ret:+.2f}%")
+        c2.metric("V2 portfolio return", f"{v2_ret:+.2f}%")
+        leader = "V1" if v1_ret >= v2_ret else "V2"
+        c3.metric("Leader", leader)
+        compare_df = build_compare_table(initial_cash)
+        if compare_df.empty:
+            st.info("No comparison data yet.")
+        else:
+            st.dataframe(compare_df, use_container_width=True, hide_index=True)
 
     with guide_tab:
         st.subheader("Operator Guide")

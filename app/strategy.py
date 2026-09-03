@@ -84,6 +84,117 @@ def optimize_params(
     return best_pair[0], best_pair[1], best_val
 
 
+def count_round_trips(
+    prices: np.ndarray,
+    buy_rise: float,
+    sell_drop: float,
+    initial_cash: float,
+) -> int:
+    if len(prices) < 2:
+        return 0
+    state = StrategyState(
+        cash=0.0,
+        shares=initial_cash / float(prices[0]),
+        peak=float(prices[0]),
+        trough=None,
+    )
+    trips = 0
+    for price in prices[1:]:
+        action, _ = step_signal(state, float(price), buy_rise=buy_rise, sell_drop=sell_drop)
+        if action == "SELL":
+            trips += 1
+    return trips
+
+
+def symbol_floor_pct(meta: dict, symbol_vol: float, median_vol: float) -> float:
+    base_floor = float(meta.get("base_floor_pct", 2.0)) / 100.0
+    min_floor = float(meta.get("min_floor_pct", 1.0)) / 100.0
+    max_floor = float(meta.get("max_floor_pct", 5.0)) / 100.0
+    ratio = 1.0 if median_vol <= 0 else symbol_vol / median_vol
+    return float(min(max(base_floor * ratio, min_floor), max_floor))
+
+
+def build_constrained_grid(
+    meta: dict,
+    symbol_vol: float,
+    median_vol: float,
+) -> list[tuple[float, float]]:
+    floor = symbol_floor_pct(meta, symbol_vol, median_vol)
+    max_buy = float(meta.get("max_buy_pct", 8.0)) / 100.0
+    pairs: list[tuple[float, float]] = []
+    for buy_rise in DEFAULT_BUY_GRID:
+        buy = float(buy_rise)
+        if buy < floor or buy > max_buy:
+            continue
+        min_sell = buy / 2.0
+        for sell_drop in DEFAULT_SELL_GRID:
+            sell = float(sell_drop)
+            if sell >= min_sell:
+                pairs.append((buy, sell))
+    return pairs
+
+
+def score_params(
+    prices: np.ndarray,
+    buy_rise: float,
+    sell_drop: float,
+    initial_cash: float,
+    lambda_per_trip: float,
+) -> float:
+    final_value = run_fixed_params(prices, buy_rise=buy_rise, sell_drop=sell_drop, initial_cash=initial_cash)
+    trips = count_round_trips(prices, buy_rise=buy_rise, sell_drop=sell_drop, initial_cash=initial_cash)
+    return final_value - (lambda_per_trip * trips)
+
+
+def optimize_params_v2(
+    train_prices: np.ndarray,
+    validate_prices: np.ndarray,
+    current: tuple[float, float],
+    meta: dict,
+    initial_cash: float,
+    symbol_vol: float,
+    median_vol: float,
+) -> tuple[float, float, float, bool, str]:
+    current_buy, current_sell = current
+    grid = build_constrained_grid(meta, symbol_vol=symbol_vol, median_vol=median_vol)
+    if not grid:
+        return current_buy, current_sell, 0.0, False, "no_valid_grid"
+
+    lambda_per_trip = float(meta.get("lambda_per_trip", 10.0))
+    best_score = float("-inf")
+    best_pair = (current_buy, current_sell)
+    for buy_rise, sell_drop in grid:
+        train_score = score_params(
+            train_prices,
+            buy_rise=buy_rise,
+            sell_drop=sell_drop,
+            initial_cash=initial_cash,
+            lambda_per_trip=lambda_per_trip,
+        )
+        if train_score > best_score:
+            best_score = train_score
+            best_pair = (buy_rise, sell_drop)
+
+    current_validate_score = score_params(
+        validate_prices,
+        buy_rise=current_buy,
+        sell_drop=current_sell,
+        initial_cash=initial_cash,
+        lambda_per_trip=lambda_per_trip,
+    )
+    candidate_validate_score = score_params(
+        validate_prices,
+        buy_rise=best_pair[0],
+        sell_drop=best_pair[1],
+        initial_cash=initial_cash,
+        lambda_per_trip=lambda_per_trip,
+    )
+    if candidate_validate_score <= current_validate_score:
+        return current_buy, current_sell, candidate_validate_score, False, "holdout_rejected"
+
+    return best_pair[0], best_pair[1], candidate_validate_score, True, "applied"
+
+
 def select_best_x_days(
     baseline_df: pd.DataFrame,
     x_candidates: list[int],

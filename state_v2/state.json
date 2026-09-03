@@ -1,0 +1,13 @@
+{
+  "cash": 0.0,
+  "shares": 0.0,
+  "peak": null,
+  "trough": null,
+  "last_price": 0.0,
+  "last_action": "HOLD",
+  "last_signal_reason": "No signal",
+  "last_run_at": null,
+  "last_bar_at": null,
+  "last_reopt_at": null,
+  "assets": {}
+}

@@ -30,21 +30,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run worker
+      - name: Run V1 worker
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
-        run: python -m app.worker
+        run: python -m app.worker --version v1
+
+      - name: Run V2 worker
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+        run: python -m app.worker --version v2
+
+      - name: Send go-live notice (first run only)
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+        run: python -m app.deploy_notice --if-needed
 
       - name: Commit state updates
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/*.json state/*.csv
+          git add state/*.json state/*.csv state_v2/*.json state_v2/*.csv
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "chore: update trading state and logs"
+            git commit -m "chore: update trading state and logs (v1 + v2)"
             git push
           fi
