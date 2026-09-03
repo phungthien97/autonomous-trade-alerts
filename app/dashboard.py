@@ -320,7 +320,7 @@ def build_price_snapshot(strategy_assets: list[dict], state: dict, display_tz: s
                 "peak": _fmt_optional_price(s.get("peak")),
                 "trough": _fmt_optional_price(s.get("trough")),
                 "model_value": round(model_value, 2) if lp is not None else None,
-                "pulled_at_local": format_timestamp_in_timezone(s.get("last_bar_at"), display_tz),
+                "pulled_at_et": format_timestamp_in_timezone(s.get("last_bar_at"), display_tz),
                 "last_action": s.get("last_action", "N/A"),
                 "signal_reason": s.get("last_signal_reason", "N/A"),
             }
@@ -338,7 +338,7 @@ def build_price_snapshot(strategy_assets: list[dict], state: dict, display_tz: s
                 "peak",
                 "trough",
                 "model_value",
-                "pulled_at_local",
+                "pulled_at_et",
                 "last_action",
                 "signal_reason",
             ]
@@ -390,12 +390,25 @@ def build_compare_table(initial_cash: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def portfolio_return_since_start(equity: pd.DataFrame, initial_cash: float, symbols: list[str]) -> float:
+def portfolio_return_since_start(
+    equity: pd.DataFrame,
+    initial_cash: float,
+    symbols: list[str],
+    experiment_start: str | None = None,
+) -> float:
     if equity.empty or not symbols:
+        return 0.0
+    eq = equity.copy()
+    if "Datetime" in eq.columns:
+        eq["Datetime"] = pd.to_datetime(eq["Datetime"], utc=True, errors="coerce")
+        if experiment_start:
+            start_dt = pd.to_datetime(experiment_start, utc=True)
+            eq = eq[eq["Datetime"] >= start_dt]
+    if eq.empty:
         return 0.0
     total_latest = 0.0
     for symbol in symbols:
-        sym_eq = equity[equity["symbol"].astype(str) == symbol] if "symbol" in equity.columns else equity
+        sym_eq = eq[eq["symbol"].astype(str) == symbol] if "symbol" in eq.columns else eq
         if sym_eq.empty:
             total_latest += initial_cash
         else:
@@ -418,8 +431,8 @@ def main() -> None:
 
     display_tz = st.sidebar.text_input(
         "Display timezone",
-        value=os.getenv("DASHBOARD_TIMEZONE", "America/Toronto"),
-        help="Use an IANA timezone like America/Toronto, America/New_York, or Asia/Ho_Chi_Minh.",
+        value=os.getenv("DASHBOARD_TIMEZONE", "America/New_York"),
+        help="Use an IANA timezone. Default is US Eastern Time (America/New_York).",
     ).strip()
     version = st.sidebar.selectbox("Version", options=["v1", "v2"], index=0)
     paths = StatePaths(version=version, project_root=ROOT)
@@ -451,8 +464,8 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     s1, s2, s3 = st.columns(3)
-    s1.markdown(f"**Last Worker Run (local)**  \n`{format_timestamp_in_timezone(state.get('last_run_at'), display_tz)}`")
-    s2.markdown(f"**Latest Bar Pull (local)**  \n`{format_timestamp_in_timezone(state.get('last_bar_at'), display_tz)}`")
+    s1.markdown(f"**Last Worker Run (ET)**  \n`{format_timestamp_in_timezone(state.get('last_run_at'), display_tz)}`")
+    s2.markdown(f"**Latest Bar Pull (ET)**  \n`{format_timestamp_in_timezone(state.get('last_bar_at'), display_tz)}`")
     s3.markdown(f"**Enabled Assets**  \n`{len([a for a in strategy_assets if a.get('enabled', True)])}`")
     st.caption("Data mode: Regular + Extended Hours (pre/post-market included when available).")
 
@@ -652,8 +665,11 @@ def main() -> None:
         ]
         v1_equity = read_csv_or_empty(StatePaths("v1", project_root=ROOT).equity_path)
         v2_equity = read_csv_or_empty(StatePaths("v2", project_root=ROOT).equity_path)
-        v1_ret = portfolio_return_since_start(v1_equity, initial_cash, symbols)
-        v2_ret = portfolio_return_since_start(v2_equity, initial_cash, symbols)
+        experiment_start = config.get("experiment_start") or read_json_or_default(
+            StatePaths("v2", project_root=ROOT).config_path, {}
+        ).get("experiment_start")
+        v1_ret = portfolio_return_since_start(v1_equity, initial_cash, symbols, experiment_start)
+        v2_ret = portfolio_return_since_start(v2_equity, initial_cash, symbols, experiment_start)
         c1, c2, c3 = st.columns(3)
         c1.metric("V1 portfolio return", f"{v1_ret:+.2f}%")
         c2.metric("V2 portfolio return", f"{v2_ret:+.2f}%")

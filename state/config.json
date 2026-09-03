@@ -6,18 +6,20 @@
   "x_days": 20,
   "reopt_days": 5,
   "alerts_enabled": false,
+  "experiment_start": "2026-09-03T05:15:00Z",
+  "experiment_weeks": 10,
   "assets": [
     {
       "symbol": "AAPL",
       "buy_rise_pct": 1.0,
-      "sell_drop_pct": 4.5,
+      "sell_drop_pct": 2.5,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
     },
     {
       "symbol": "AMD",
-      "buy_rise_pct": 8.0,
+      "buy_rise_pct": 1.0,
       "sell_drop_pct": 1.0,
       "x_days": 20,
       "reopt_days": 5,
@@ -25,7 +27,7 @@
     },
     {
       "symbol": "GOOG",
-      "buy_rise_pct": 7.0,
+      "buy_rise_pct": 2.0,
       "sell_drop_pct": 1.0,
       "x_days": 20,
       "reopt_days": 5,
@@ -33,16 +35,16 @@
     },
     {
       "symbol": "MSFT",
-      "buy_rise_pct": 2.0,
-      "sell_drop_pct": 1.5,
+      "buy_rise_pct": 1.0,
+      "sell_drop_pct": 1.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
     },
     {
       "symbol": "NVDA",
-      "buy_rise_pct": 1.5,
-      "sell_drop_pct": 2.0,
+      "buy_rise_pct": 11.5,
+      "sell_drop_pct": 1.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
@@ -50,15 +52,15 @@
     {
       "symbol": "SMH",
       "buy_rise_pct": 6.5,
-      "sell_drop_pct": 3.5,
+      "sell_drop_pct": 1.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
     },
     {
       "symbol": "ZSP.TO",
-      "buy_rise_pct": 2.5,
-      "sell_drop_pct": 1.0,
+      "buy_rise_pct": 2.0,
+      "sell_drop_pct": 2.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true

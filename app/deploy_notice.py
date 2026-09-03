@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.notifier import send_signal_email
 from app.paths import ROOT, StatePaths
+from app.timezone_utils import format_display, now_display
 
 
 def _read_json(path: Path) -> dict:
@@ -23,7 +24,7 @@ def build_go_live_message(project_root: Path | None = None) -> str:
     v2_paths = StatePaths("v2", project_root=root)
     v1_config = _read_json(v1_paths.config_path)
     v2_config = _read_json(v2_paths.config_path)
-    now = datetime.now(timezone.utc)
+    now = now_display()
 
     symbols = [
         str(a.get("symbol", "")).upper()
@@ -37,14 +38,14 @@ def build_go_live_message(project_root: Path | None = None) -> str:
         [
             "V2 Experiment is LIVE",
             "",
-            f"Deployed at: {now.isoformat().replace('+00:00', 'Z')}",
+            f"Deployed at (ET): {format_display(now)}",
             f"Experiment start: {experiment_start}",
             f"Duration: {experiment_weeks} weeks",
             "",
             "What is running:",
             "  - V1 worker every 10 min -> state/ (original optimizer, unchanged)",
             "  - V2 worker every 10 min -> state_v2/ (constrained optimizer + holdout)",
-            "  - Weekly summary email: Saturdays 12:00 UTC",
+            "  - Weekly summary email: Saturdays 10:00 AM Eastern Time",
             "  - Conclusion email: week 10",
             "",
             f"Symbols ({len(symbols)}): {', '.join(symbols)}",
