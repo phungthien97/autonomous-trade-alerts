@@ -9,60 +9,62 @@
   "experiment_start": "2026-09-03T01:00:00Z",
   "experiment_weeks": 10,
   "meta": {
-    "last_meta_at": null,
-    "meta_reopt_days": 28,
-    "lambda_per_trip": 10.0,
+    "lambda_per_trip": 20.0,
     "base_floor_pct": 2.0,
-    "max_buy_pct": 8.0,
+    "max_buy_pct": 10.0,
     "train_days": 15,
-    "validate_days": 5,
-    "simulation_weeks": 8
+    "validate_days": 6,
+    "simulation_weeks": 8,
+    "meta_reopt_days": 28,
+    "min_floor_pct": 1.0,
+    "max_floor_pct": 5.0,
+    "last_meta_at": "2026-09-03T01:01:42.545931Z"
   },
   "assets": [
     {
       "symbol": "AAPL",
-      "buy_rise_pct": 1.0,
-      "sell_drop_pct": 2.5,
+      "buy_rise_pct": 1.5,
+      "sell_drop_pct": 4.5,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
     },
     {
       "symbol": "AMD",
-      "buy_rise_pct": 1.0,
-      "sell_drop_pct": 1.0,
+      "buy_rise_pct": 3.5,
+      "sell_drop_pct": 3.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
     },
     {
       "symbol": "GOOG",
-      "buy_rise_pct": 2.0,
-      "sell_drop_pct": 1.0,
+      "buy_rise_pct": 2.5,
+      "sell_drop_pct": 8.5,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
     },
     {
       "symbol": "MSFT",
-      "buy_rise_pct": 1.0,
-      "sell_drop_pct": 1.0,
+      "buy_rise_pct": 2.0,
+      "sell_drop_pct": 1.5,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
     },
     {
       "symbol": "NVDA",
-      "buy_rise_pct": 11.5,
-      "sell_drop_pct": 1.0,
+      "buy_rise_pct": 3.0,
+      "sell_drop_pct": 4.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
     },
     {
       "symbol": "SMH",
-      "buy_rise_pct": 6.5,
-      "sell_drop_pct": 1.0,
+      "buy_rise_pct": 3.0,
+      "sell_drop_pct": 3.5,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
