@@ -47,8 +47,8 @@
     },
     {
       "symbol": "MSFT",
-      "buy_rise_pct": 2.0,
-      "sell_drop_pct": 1.5,
+      "buy_rise_pct": 2.5,
+      "sell_drop_pct": 6.5,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true
