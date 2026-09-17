@@ -25,3 +25,4 @@ Datetime,Action,Price,Shares_After,Cash_After,Portfolio_Value,buy_rise_pct,sell_
 2026-09-15T20:00:00+00:00,SELL,497.7,0.0,999.0752732696448,999.0752732696448,2.0,1.5,Price dropped from rolling peak threshold,MSFT
 2026-09-16T16:30:00+00:00,BUY,215.9900054931641,4.673810536276283,0.0,1009.4963634043226,2.0,2.0,Price rose from rolling trough threshold,NVDA
 2026-09-16T19:30:00+00:00,SELL,512.4349975585938,0.0,1135.9616749457591,1135.9616749457591,1.5,1.0,Price dropped from rolling peak threshold,AMD
+2026-09-17T11:00:00+00:00,BUY,525.9733,2.159732585182098,0.0,1135.9616749457591,1.5,1.0,Price rose from rolling trough threshold,AMD
