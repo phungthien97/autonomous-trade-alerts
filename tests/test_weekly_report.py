@@ -92,12 +92,13 @@ def test_week_10_conclusion_format(tmp_path: Path) -> None:
     assert "10-Week Experiment Conclusion" in report
 
 
-def test_should_send_weekly_only_saturday_10am_et() -> None:
+def test_should_send_weekly_saturday_morning_et_window() -> None:
     from zoneinfo import ZoneInfo
 
     et = ZoneInfo("America/New_York")
     assert should_send_weekly_now(datetime(2026, 3, 7, 10, 0, tzinfo=et)) is True
-    assert should_send_weekly_now(datetime(2026, 3, 7, 11, 0, tzinfo=et)) is False
+    assert should_send_weekly_now(datetime(2026, 3, 7, 12, 30, tzinfo=et)) is True
+    assert should_send_weekly_now(datetime(2026, 3, 7, 13, 0, tzinfo=et)) is False
     assert should_send_weekly_now(datetime(2026, 3, 6, 10, 0, tzinfo=et)) is False
 
 
@@ -106,6 +107,7 @@ def test_send_flag_calls_email(mock_send, tmp_path: Path) -> None:
     from app.weekly_report import main
     import sys
 
+    mock_send.return_value = True
     _write_fixture_state(tmp_path, "v1", [], "2026-01-01T00:00:00Z")
     _write_fixture_state(tmp_path, "v2", [], "2026-01-01T00:00:00Z")
     with patch.object(sys, "argv", ["weekly_report", "--send", "--force"]):
@@ -113,3 +115,16 @@ def test_send_flag_calls_email(mock_send, tmp_path: Path) -> None:
             mock_build.return_value = "test report"
             main()
     mock_send.assert_called_once()
+
+
+@patch("app.weekly_report.send_signal_email")
+def test_send_fails_when_email_returns_false(mock_send, tmp_path: Path) -> None:
+    from app.weekly_report import main
+    import sys
+    import pytest
+
+    mock_send.return_value = False
+    with patch.object(sys, "argv", ["weekly_report", "--send", "--force"]):
+        with patch("app.weekly_report.build_report", return_value="test report"):
+            with pytest.raises(SystemExit):
+                main()

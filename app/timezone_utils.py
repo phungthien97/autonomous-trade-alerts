@@ -22,6 +22,10 @@ def format_display(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M:%S %Z") -> st
 
 
 def should_send_weekly_now(now: datetime | None = None) -> bool:
+    """True on Saturday morning ET (9–12 inclusive).
+
+    Uses a window (not an exact hour) because GitHub Actions cron jobs are often delayed.
+    """
     now = now or now_display()
     local = now.astimezone(DISPLAY_TZ)
-    return local.weekday() == WEEKLY_SEND_WEEKDAY and local.hour == WEEKLY_SEND_HOUR
+    return local.weekday() == WEEKLY_SEND_WEEKDAY and 9 <= local.hour <= 12

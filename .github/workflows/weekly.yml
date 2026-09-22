@@ -2,10 +2,18 @@ name: Weekly Summary Email
 
 on:
   schedule:
-    # 14:00 and 15:00 UTC on Saturdays covers 10:00 AM Eastern (EDT/EST).
-    # The script only sends when local time is exactly Saturday 10:00 AM ET.
-    - cron: "0 14,15 * * 6"
+    # Multiple Saturday UTC slots so delayed Actions runners still hit morning ET.
+    # Script uses --force because the schedule already gates to Saturday.
+    - cron: "0 14,15,16,17 * * 6"
   workflow_dispatch:
+  # Catch-up send when the weekly email path itself is fixed/updated.
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/weekly.yml"
+      - "app/weekly_report.py"
+      - "app/timezone_utils.py"
+      - "app/notifier.py"
 
 permissions:
   contents: read
@@ -34,4 +42,5 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
-        run: python -m app.weekly_report --send
+        # --force: cron/push already decide when to run; do not skip on delayed hour.
+        run: python -m app.weekly_report --send --force

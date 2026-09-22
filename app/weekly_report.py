@@ -212,20 +212,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build and optionally send weekly bot summary.")
     parser.add_argument("--dry-run", action="store_true", help="Print report without sending email")
     parser.add_argument("--send", action="store_true", help="Send report via email")
-    parser.add_argument("--force", action="store_true", help="Send even if not Saturday 10:00 AM ET")
+    parser.add_argument("--force", action="store_true", help="Send even if not Saturday morning ET")
     args = parser.parse_args()
 
     if args.send and not args.force and not args.dry_run and not should_send_weekly_now():
-        print("weekly_email=skipped reason=not_saturday_10am_eastern")
+        print("weekly_email=skipped reason=not_saturday_morning_eastern")
         return
 
     report = build_report()
     print(report)
     if args.send and not args.dry_run:
-        send_signal_email(
+        sent = send_signal_email(
             subject="Weekly Trading Bot Summary",
             body=report,
         )
+        if not sent:
+            raise SystemExit(
+                "weekly_email=failed reason=missing_smtp_credentials_or_send_error "
+                "(check GMAIL_USER, GMAIL_APP_PASSWORD, ALERT_TO_EMAIL secrets)"
+            )
+        print("weekly_email=sent")
 
 
 if __name__ == "__main__":
