@@ -11,14 +11,14 @@
   "meta": {
     "lambda_per_trip": 20.0,
     "base_floor_pct": 2.0,
-    "max_buy_pct": 10.0,
-    "train_days": 15,
-    "validate_days": 6,
+    "max_buy_pct": 8.0,
+    "train_days": 18,
+    "validate_days": 5,
     "simulation_weeks": 8,
     "meta_reopt_days": 28,
     "min_floor_pct": 1.0,
     "max_floor_pct": 5.0,
-    "last_meta_at": "2026-09-03T01:01:42.545931Z"
+    "last_meta_at": "2026-10-01T05:38:44.732421Z"
   },
   "assets": [
     {
