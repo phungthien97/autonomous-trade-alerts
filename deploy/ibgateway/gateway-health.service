@@ -1,0 +1,8 @@
+[Unit]
+Description=IB Gateway health check (port 4002)
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/ibc/gateway-health.sh

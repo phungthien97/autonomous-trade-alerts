@@ -469,8 +469,8 @@ def main() -> None:
     s3.markdown(f"**Enabled Assets**  \n`{len([a for a in strategy_assets if a.get('enabled', True)])}`")
     st.caption("Data mode: Regular + Extended Hours (pre/post-market included when available).")
 
-    bot_tab, snapshot_tab, history_tab, performance_tab, compare_tab, guide_tab = st.tabs(
-        ["Bot Setup", "Live Snapshot", "History", "Performance", "Compare", "Guide"]
+    bot_tab, snapshot_tab, history_tab, performance_tab, compare_tab, live_tab, guide_tab = st.tabs(
+        ["Bot Setup", "Live Snapshot", "History", "Performance", "Compare", "Live Trading", "Guide"]
     )
 
     with bot_tab:
@@ -680,6 +680,31 @@ def main() -> None:
             st.info("No comparison data yet.")
         else:
             st.dataframe(compare_df, use_container_width=True, hide_index=True)
+
+    with live_tab:
+        from app.live.control import ack_risk, disable_trading, enable_trading, live_status
+        from app.paths import LivePaths
+
+        live_paths = LivePaths(project_root=ROOT)
+        status = live_status(live_paths)
+        st.subheader("Live trading")
+        st.caption("Controls write only state_live files. Broker passwords stay on the host.")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Mode", status["mode"])
+        c2.metric("Trading enabled", "yes" if status["trading_enabled"] else "no")
+        c3.metric("Symbols", ", ".join(status["symbols"]))
+        st.write("Open risk incident:", status["incident"] or "none")
+        st.json(status["assets"] or {})
+        b1, b2, b3 = st.columns(3)
+        if b1.button("Disable trading"):
+            disable_trading(live_paths)
+            st.success("Trading disabled")
+        if b2.button("Enable trading"):
+            enable_trading(live_paths)
+            st.success("Trading enabled")
+        if b3.button("Ack risk"):
+            ack_risk(live_paths)
+            st.success("Risk incident acknowledged")
 
     with guide_tab:
         st.subheader("Operator Guide")

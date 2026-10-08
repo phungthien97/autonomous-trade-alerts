@@ -50,3 +50,51 @@ class StatePaths:
     @property
     def meta_history_path(self) -> Path:
         return self.state_dir / "meta_history.csv"
+
+
+@dataclass(frozen=True)
+class LivePaths:
+    """Paths for the live variant under state_live/ (or a custom project root)."""
+
+    project_root: Path | None = None
+
+    @property
+    def state_dir(self) -> Path:
+        base = self.project_root if self.project_root is not None else ROOT
+        return base / "state_live"
+
+    @property
+    def config_path(self) -> Path:
+        return self.state_dir / "config.json"
+
+    @property
+    def state_path(self) -> Path:
+        return self.state_dir / "state.json"
+
+    @property
+    def trades_path(self) -> Path:
+        return self.state_dir / "trades.csv"
+
+    @property
+    def equity_path(self) -> Path:
+        return self.state_dir / "equity.csv"
+
+    @property
+    def audit_dir(self) -> Path:
+        return self.state_dir / "audit"
+
+    @property
+    def audit_log_path(self) -> Path:
+        return self.audit_dir / "events.jsonl"
+
+    @property
+    def queue_path(self) -> Path:
+        return self.state_dir / "queue.json"
+
+    @property
+    def idempotency_path(self) -> Path:
+        return self.state_dir / "idempotency.json"
+
+    @property
+    def risk_path(self) -> Path:
+        return self.state_dir / "risk.json"

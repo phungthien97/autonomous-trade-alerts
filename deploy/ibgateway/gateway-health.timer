@@ -1,0 +1,13 @@
+[Unit]
+Description=Gateway health after Auto-Restart and each morning (UTC)
+
+[Timer]
+# Shortly after AutoRestartTime=11:45 PM UTC
+OnCalendar=*-*-* 00:15:00
+# Morning check ~08:00 America/Toronto ≈ 12:00 UTC (EDT) / 13:00 UTC (EST) — use 12:15 UTC
+OnCalendar=*-*-* 12:15:00
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

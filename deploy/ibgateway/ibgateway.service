@@ -1,0 +1,22 @@
+[Unit]
+Description=IB Gateway via IBC (paper API on localhost)
+After=network.target xvfb.service
+Requires=xvfb.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+Environment=DISPLAY=:1
+Environment=HOME=/home/ubuntu
+EnvironmentFile=-/opt/autonomous-trade-alerts/.env
+# -inline keeps logs on stdout for journald; script stays up across Gateway auto-restart
+ExecStart=/home/ubuntu/ibc/gatewaystart.sh -inline
+Restart=always
+RestartSec=10
+# Give IBKR login / 2FA window time before systemd kills a stuck start
+TimeoutStartSec=180
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

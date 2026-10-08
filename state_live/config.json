@@ -1,0 +1,21 @@
+{
+  "mode": "live_dry_run",
+  "symbols": ["MSFT", "AAPL", "SMH"],
+  "total_cash": 1000.0,
+  "assets": [
+    {"symbol": "MSFT", "buy_rise_pct": 2.0, "sell_drop_pct": 4.0, "enabled": true},
+    {"symbol": "AAPL", "buy_rise_pct": 2.0, "sell_drop_pct": 4.0, "enabled": true},
+    {"symbol": "SMH", "buy_rise_pct": 2.0, "sell_drop_pct": 4.0, "enabled": true}
+  ],
+  "trading_enabled": true,
+  "allow_fractional_default": true,
+  "fee_schedule_name": "default_ibkr_us_stock",
+  "alerts": {
+    "fill": true,
+    "reject": true,
+    "disconnect": true,
+    "risk_alert": true,
+    "trading_stopped": true,
+    "weekly_2fa": true
+  }
+}

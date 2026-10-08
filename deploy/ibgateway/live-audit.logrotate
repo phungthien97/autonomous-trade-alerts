@@ -1,0 +1,8 @@
+/opt/autonomous-trade-alerts/state_live/audit/*.jsonl {
+    weekly
+    rotate 104
+    compress
+    missingok
+    notifempty
+    copytruncate
+}

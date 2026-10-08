@@ -1,0 +1,191 @@
+"""IBKR adapter via ib_insync.
+
+A running IB Gateway (or TWS) must be up for real connections. Paper default
+is 127.0.0.1:4002. Unit tests inject a fake client and never place orders.
+"""
+
+from __future__ import annotations
+
+import os
+
+from app.account_snapshot import AccountSnapshot
+from app.broker.base import OrderResult
+
+# IBKR may advertise sizeIncrement < 1 for US stocks, but the socket API rejects
+# fractional equity orders with Error 10243 ("use desktop version"). Keep empty
+# so live/paper API path sizes in whole shares; leftover cash stays cash (Q2.4).
+DEFAULT_FRACTIONAL: frozenset[str] = frozenset()
+
+
+def connection_settings() -> tuple[str, int, int]:
+    host = os.environ.get("IB_HOST", "127.0.0.1")
+    port = int(os.environ.get("IB_PORT", "4002"))
+    client_id = int(os.environ.get("IB_CLIENT_ID", "1"))
+    return host, port, client_id
+
+
+class IbkrBroker:
+    def __init__(
+        self,
+        ib=None,
+        fractional_symbols: set[str] | frozenset[str] | None = None,
+        dry_run: bool = False,
+        port: int | None = None,
+    ) -> None:
+        self.dry_run = dry_run
+        self.fractional_symbols = set(DEFAULT_FRACTIONAL if fractional_symbols is None else fractional_symbols)
+        if ib is None:
+            from ib_insync import IB
+
+            host, default_port, client_id = connection_settings()
+            self.ib = IB()
+            self.ib.connect(host, port if port is not None else default_port, clientId=client_id)
+        else:
+            self.ib = ib
+
+    def get_positions(self) -> dict[str, float]:
+        positions: dict[str, float] = {}
+        for pos in self.ib.positions():
+            positions[pos.contract.symbol] = float(pos.position)
+        return positions
+
+    def get_account_snapshot(self) -> AccountSnapshot:
+        """Map IB account values into USD-denominated snapshot fields.
+
+        Preference: USD tags, then blank currency, then BASE/CAD (Canada paper).
+        Non-USD amounts are converted with ExchangeRate(USD) when IB provides it
+        (base-currency units per 1 USD); otherwise the base/CAD figure is used so
+        paper accounts are not read as zero.
+        """
+        by_tag: dict[str, dict[str, float]] = {}
+        for item in self.ib.accountValues():
+            try:
+                value = float(item.value)
+            except (TypeError, ValueError):
+                continue
+            currency = item.currency or ""
+            by_tag.setdefault(item.tag, {})[currency] = value
+
+        cash = _pick_usd_amount(by_tag, "TotalCashValue")
+        available = _pick_usd_amount(by_tag, "AvailableFunds")
+        if available <= 0:
+            available = cash
+        return AccountSnapshot(
+            cash_usd=cash,
+            buying_power_usd=_pick_usd_amount(by_tag, "BuyingPower"),
+            equity_usd=_pick_usd_amount(by_tag, "NetLiquidation"),
+            available_funds_usd=available,
+        )
+
+    def supports_fractional(self, symbol: str) -> bool:
+        return symbol in self.fractional_symbols
+
+    def place_market_order(self, symbol: str, side: str, quantity: float, dry_run: bool | None = None) -> OrderResult:
+        is_dry = self.dry_run if dry_run is None else dry_run
+        contract, order = _market_order(symbol, side, quantity)
+        if is_dry:
+            return OrderResult(order_id="dry", status="dry_run", filled_qty=0.0, avg_price=0.0, remaining_qty=0.0)
+        trade = self.ib.placeOrder(contract, order)
+        status_obj = trade.orderStatus
+        status = str(getattr(status_obj, "status", "submitted")).lower()
+        filled = float(getattr(status_obj, "filled", 0.0) or 0.0)
+        remaining = float(getattr(status_obj, "remaining", 0.0) or 0.0)
+        avg = float(getattr(status_obj, "avgFillPrice", 0.0) or 0.0)
+        order_id = str(getattr(trade.order, "orderId", ""))
+        mapped = _map_status(status, filled, remaining)
+        if mapped == "partial" and remaining > 0:
+            self.cancel_order(order_id)
+            remaining = 0.0
+        return OrderResult(order_id, mapped, filled, avg, remaining)
+
+    def cancel_order(self, order_id: str) -> None:
+        for trade in self.ib.openTrades():
+            if str(getattr(trade.order, "orderId", "")) == str(order_id):
+                self.ib.cancelOrder(trade.order)
+                return
+
+    def latest_hourly_closes(
+        self,
+        symbols: list[str],
+        *,
+        use_rth: bool = True,
+        duration: str = "5 D",
+    ) -> tuple[dict[str, float], dict[str, str]]:
+        """Latest TRADES hourly bar close per symbol (RTH by default — R6).
+
+        Uses complimentary IBKR US historical data when entitled. Returns
+        ({symbol: close}, {symbol: bar_ts_iso}); missing symbols are omitted.
+        """
+        prices: dict[str, float] = {}
+        bars: dict[str, str] = {}
+        for symbol in symbols:
+            contract = _stock_contract(symbol)
+            qualified = self.ib.qualifyContracts(contract)
+            if not qualified:
+                continue
+            hist = self.ib.reqHistoricalData(
+                qualified[0],
+                endDateTime="",
+                durationStr=duration,
+                barSizeSetting="1 hour",
+                whatToShow="TRADES",
+                useRTH=use_rth,
+                formatDate=2,
+                keepUpToDate=False,
+            )
+            if hasattr(self.ib, "sleep"):
+                self.ib.sleep(0.5)
+            if not hist:
+                continue
+            last = hist[-1]
+            prices[symbol] = float(last.close)
+            date = last.date
+            if hasattr(date, "isoformat"):
+                bars[symbol] = date.isoformat()
+            else:
+                bars[symbol] = str(date)
+        return prices, bars
+
+
+def _pick_usd_amount(by_tag: dict[str, dict[str, float]], tag: str) -> float:
+    row = by_tag.get(tag) or {}
+    if "USD" in row:
+        return row["USD"]
+    if "" in row:
+        return row[""]
+
+    usd_rate = (by_tag.get("ExchangeRate") or {}).get("USD")
+    for currency in ("BASE", "CAD"):
+        if currency not in row:
+            continue
+        amount = row[currency]
+        if usd_rate is not None and usd_rate > 0:
+            return amount / usd_rate
+        return amount
+    return 0.0
+
+
+def _stock_contract(symbol: str):
+    from ib_insync import Stock
+
+    return Stock(symbol, "SMART", "USD")
+
+
+def _market_order(symbol: str, side: str, quantity: float):
+    from ib_insync import MarketOrder
+
+    return _stock_contract(symbol), MarketOrder(side, quantity)
+
+
+def _map_status(status: str, filled: float, remaining: float) -> str:
+    if status in {"cancelled", "apicancelled", "inactive"} and filled <= 0:
+        return "cancelled"
+    if status in {"cancelled", "apicancelled"} and filled > 0:
+        return "partial"
+    if remaining > 1e-9 and filled > 0:
+        return "partial"
+    if status in {"filled"} or (filled > 0 and remaining <= 1e-9):
+        return "filled"
+    if status in {"rejected"}:
+        return "rejected"
+    return "submitted"

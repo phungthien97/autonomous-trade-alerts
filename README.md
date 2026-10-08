@@ -50,7 +50,10 @@ Add these repository secrets:
 
 - Streamlit free tier usually requires a **public repository**.
 - yfinance intraday limits apply (roughly 730 days for hourly, ~60 days for 15m).
-- This app sends **alerts only**. It does not place brokerage orders.
+- This app's paper workers send **alerts only**.
+- **Live mode can place real IBKR orders.** Read `docs/live_trading_blueprint.md` and `deploy/ibgateway/README.md` before enabling it. Modes are `sim` → `broker_paper` → `live_dry_run` → `live`. Live requires `LIVE_TRADING_CONFIRM=YES`. Default seed config is `live_dry_run` for MSFT, AAPL, and SMH.
+- Checklist: `docs/live_trading_todo.md`.
+- Oracle SSH keys are documented in `deploy/ibgateway/README.md` (they stay in `C:\Users\phung\.ssh\`, not in git).
 
 ## State files
 

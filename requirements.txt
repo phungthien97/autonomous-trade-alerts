@@ -4,3 +4,5 @@ yfinance
 streamlit
 plotly
 pytest
+ib_insync
+tzdata

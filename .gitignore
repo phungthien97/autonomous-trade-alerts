@@ -9,3 +9,9 @@ env/
 ENV/
 
 .streamlit/secrets.toml
+.env
+ssh-key-*.key
+ssh-key-*.key.pub
+*.pem
+.pytest_cache/
+deploy/ibgateway/gw-login-debug*.png

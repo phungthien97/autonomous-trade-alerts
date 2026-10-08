@@ -1,0 +1,13 @@
+[Unit]
+Description=Xvfb display :1 for IB Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/bin/Xvfb :1 -screen 0 1280x800x24 -ac
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
