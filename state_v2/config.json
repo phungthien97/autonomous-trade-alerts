@@ -27,7 +27,9 @@
       "sell_drop_pct": 4.5,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true
+      "enabled": true,
+      "exit_only": false,
+      "awaiting_first_buy": false
     },
     {
       "symbol": "AMD",
@@ -35,7 +37,9 @@
       "sell_drop_pct": 8.0,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true
+      "enabled": true,
+      "exit_only": false,
+      "awaiting_first_buy": false
     },
     {
       "symbol": "GOOG",
@@ -43,7 +47,9 @@
       "sell_drop_pct": 8.5,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true
+      "enabled": true,
+      "exit_only": false,
+      "awaiting_first_buy": false
     },
     {
       "symbol": "MSFT",
@@ -51,7 +57,9 @@
       "sell_drop_pct": 6.5,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true
+      "enabled": true,
+      "exit_only": false,
+      "awaiting_first_buy": false
     },
     {
       "symbol": "NVDA",
@@ -59,7 +67,9 @@
       "sell_drop_pct": 4.0,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true
+      "enabled": true,
+      "exit_only": false,
+      "awaiting_first_buy": false
     },
     {
       "symbol": "SMH",
@@ -67,7 +77,9 @@
       "sell_drop_pct": 3.5,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true
+      "enabled": true,
+      "exit_only": false,
+      "awaiting_first_buy": false
     },
     {
       "symbol": "VOO",
@@ -75,7 +87,9 @@
       "sell_drop_pct": 2.5,
       "x_days": 20,
       "reopt_days": 5,
-      "enabled": true
+      "enabled": true,
+      "exit_only": false,
+      "awaiting_first_buy": false
     }
   ]
 }
