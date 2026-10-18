@@ -193,7 +193,7 @@ Goal: one clean bot — **picker-driven universe**, **IBKR-first data**, **OVH-o
 | Done | Step | Notes |
 |------|------|--------|
 | [x] | J1 | Timer installed; forced dry-run **ok** (`run_id=20261018_002339`, selected FICO/COHR/GEN/AKAM/MOS, `pending_written=False`) |
-| [ ] | J2 | Enable pending writes (drop `--dry-run` from unit); confirm weekend summary email |
+| [~] | J2 | Unit live (no `--dry-run` / no `--no-email`); force verify run in progress 2026-10-18 — mark `[x]` when pending + email confirmed |
 | [ ] | J3 | Monday apply via `live_worker` (paper paths first if staging) |
 | [ ] | J4 | Confirm soft-rotate + SMA gate in RTH; equal cash as frees |
 | [ ] | J5 | Confirm mid-biweek V1/V2 re-opt still overwrites buy/sell % |
@@ -223,13 +223,13 @@ Implement blueprint **Part III** prompts **D01–D08**. Spec: investigation §13
 
 ### K2 — OVH ops
 
-- [x] Install Tailscale on VPS + phone + laptop (free personal)  
-- [x] Enable `streamlit-dashboard.service` on OVH (`127.0.0.1:8501`, HTTP 200)  
-- [x] Open via Tailscale Serve: `https://vps-338e3236.tail03235c.ts.net/` (tailnet only)  
-- [ ] Confirm marks path uses client id 9 (no clash with worker=1 / picker=7)  
-- [ ] Confirm enable/disable + ack work from phone without SSH  
+- [x] Install Tailscale on VPS + phone + laptop (free personal)
+- [x] Enable `streamlit-dashboard.service` on OVH (`127.0.0.1:8501`, HTTP 200)
+- [x] Open via Tailscale Serve: `https://vps-338e3236.tail03235c.ts.net/` (tailnet only)
+- [x] Confirm marks path uses client id 9 (no clash with worker=1 / picker=7) — `DASHBOARD_IB_CLIENT_ID=9`; Refresh shows `marks=ibkr` + IBKR equity
+- [x] Confirm enable/disable + ack work from phone without SSH — Disable→OFF, Enable→ON, Ack cleared seeded incident (2026-10-18)
 
-**K acceptance:** can view live/paper/picker and use safe controls from phone over Tailscale without logging into IBKR.
+**K acceptance:** can view live/paper/picker and use safe controls from phone over Tailscale without logging into IBKR. **DONE.**
 
 ---
 
@@ -263,12 +263,12 @@ Implement blueprint **Part III** prompts **D01–D08**. Spec: investigation §13
 | 2026-10-17 | Deployed app+picker to OVH; wiki UA fix; picker-rank.timer on; full S&P dry-run in progress (client 7) |
 | 2026-10-17 | Remote viewer §13 + blueprint Part III (D01–D08) + todo Phase K locked |
 | 2026-10-17 | J1 dry-run ok (FICO/COHR/GEN/AKAM/MOS); Phase K software D01–D08 landed |
+| 2026-10-18 | K2 done: marks client id 9 (`marks=ibkr`); Disable/Enable/Ack verified over Tailscale; trading left ON |
 
 ---
 
 ## Next action
 
-1. **K2** — install Tailscale (you) + enable `streamlit-dashboard.service` on OVH.  
-2. **G3 Mon 2026-10-19 RTH** — confirm AAPL fill + one SELL; do **not** start G4/G5 early.  
-3. **J2** — after reviewing dry-run report, drop `--dry-run` from `picker-rank.service` when ready.  
-4. After J + G3 (+ K2): only then consider G4.
+1. **G3 Mon 2026-10-19 RTH** — confirm AAPL fill + one SELL; do **not** start G4/G5 early.
+2. Finish **J2** verify (pending file + summary email from force run), then wait for **J3** Monday apply.
+3. After J + G3: only then consider G4.
