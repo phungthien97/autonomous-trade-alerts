@@ -4,9 +4,9 @@ Working document for deciding how (and whether) to turn the current alert/simula
 
 Use this with a walkthrough: pick **one question at a time**, discuss, then fill **Answer** + **Notes**. When enough answers are locked, draft the new app blueprint.
 
-**Status:** Investigation complete (Q0–Q7); blueprint v2 (TDD prompts) + todo rewritten  
-**Related:** `docs/v2_blueprint.md`, `docs/live_trading_blueprint.md`, `docs/live_trading_todo.md`, `README.md` (alerts only today)  
-**Assumed starting point:** Toronto / Canada resident; V2-style peak/trough strategy; **USD-only** universe (US equities/ETFs including **VOO** in place of former `ZSP.TO`)
+**Status:** Investigation complete (Q0–Q7); picker **§12** locked; **remote Streamlit portfolio viewer §13 locked (2026-10-17)**  
+**Related:** `docs/live_trading_blueprint.md`, `docs/live_trading_todo.md`, `README.md`; archived V2: `archive/docs/v2_blueprint.md`  
+**Assumed starting point:** Toronto / Canada resident; V2-style peak/trough strategy; **USD-only** universe (US equities/ETFs including **VOO** in place of former `ZSP.TO`). **Active ops:** biweekly S&P 500 picker (§12) owns live/paper symbol lists. Starter trio MSFT/AAPL/SMH and pre-picker Q3.6 answers are **historical** only. **Remote view:** Streamlit on OVH via Tailscale (§13) — **no second IBKR Gateway/Client Portal login** to check the book.
 
 ---
 
@@ -420,7 +420,7 @@ Goal is **beat equal-weight B&H after fees** (Q0.1), not max absolute return. Ra
 
 | Evidence | Finding |
 |----------|---------|
-| Longer V1 newsletter window (May–Jul style results in `analysis/newsletter.md`) | Strongest edges: **MSFT (+13.5%)**, **SMH (+11.5%)**, **AAPL (+7.1%)**. Bot won by sitting in cash on declines/chop. |
+| Longer V1 newsletter window (May–Jul style results in `archive/analysis/newsletter.md`) | Strongest edges: **MSFT (+13.5%)**, **SMH (+11.5%)**, **AAPL (+7.1%)**. Bot won by sitting in cash on declines/chop. |
 | Same write-up — what fails | **AMD** / calm index (**ZSP→VOO**) lose to B&H via whipsaw; **NVDA** hurt by bad threshold/chop mixes. |
 | Current ~3-week V1/V2 experiment (`state` / `state_v2`) | Short sample; **MSFT** still among best edges on V2; don’t overweight NVDA’s brief V1 win. |
 | ~120 trading days hourly backtest + rough fees (min commission + slippage) | Edge leaders: **MSFT, AAPL, SMH**. **AMD** high absolute return but **large negative edge**. **NVDA/GOOG/VOO** weak edge on that window. |
@@ -431,7 +431,8 @@ Goal is **beat equal-weight B&H after fees** (Q0.1), not max absolute return. Ra
 
 - Equal-weight B&H for live = equal weight of **MSFT + AAPL + SMH** only.
 - Paper historical CSV may still show `ZSP.TO` pre-cutover; VOO sleeve was reset fresh.
-**Defer?** no
+- **Supersession (2026-10):** Static live trio is the MVP bootstrap. Ongoing universe selection is the **S&P 500 auto stock-picker** (Section 12): biweekly rank → soft rotate → feeds paper V1, paper V2, and live. B&H benchmark then = equal-weight of the **picker active list** (0–5 names), not the fixed trio.
+**Defer?** no (trio locked for MVP; picker is the next universe layer)
 
 ---
 
@@ -688,9 +689,9 @@ Fill only after broker + risk + architecture answers exist.
 - Streamlit / web dashboard with live toggles?
 - Mobile notifications only?
 
-**Answer:** Keep a **web/Streamlit (or equivalent) dashboard** as the primary way to see status — positions, mode, PnL vs B&H, alerts history — plus email/SMS for events (Q0.3 / Q4.3). Not CLI-only.  
+**Answer:** Keep a **web/Streamlit dashboard** as the primary way to see status — positions, mode, PnL vs B&H, alerts history — plus email for events (Q0.3 / Q4.3). Not CLI-only.  
 **Confidence:** high  
-**Notes:** Dashboard should run against the unified Oracle host (or securely read its state); live controls (disable/ack) ideally available without SSH (Q7.3).  
+**Notes:** **Superseded detail (2026-10-17):** host is **OVH** (not Oracle). Phone/laptop access = Streamlit **on OVH** over **Tailscale** (Section 13). Do **not** log into a second IB Gateway/TWS session just to “check the portfolio.”  
 **Defer?** no
 
 ### Q7.3 — Config ergonomics
@@ -698,28 +699,30 @@ Fill only after broker + risk + architecture answers exist.
 - Symbols, sizing, kill-switch, mode — edited where?
 - Remote disable without SSH?
 
-**Answer:** Day-to-day controls via **auth-protected dashboard**: symbols (live trio), mode, trading disable/enable, risk-alert **ack**. **Remote disable and ack without SSH** required (supports Q4.1 2h escalate). IB passwords and API secrets stay **VM-only** (env/Docker), not editable in the dashboard.  
+**Answer:** Day-to-day **safe controls** via dashboard over Tailscale: trading **enable/disable**, risk-alert **ack**. **No mode changes** (`broker_paper` / `live_dry_run` / `live`) from the phone UI (SSH/ops only). IB passwords and API secrets stay **VM-only**, not editable in the dashboard. Tailscale membership is the access gate (no extra Streamlit password for v1).  
 **Confidence:** high  
-**Notes:**  
+**Notes:** Full mode / symbol edits remain ops/SSH or future Lab controls — see Section 13.  
 **Defer?** no
 
 ### Q7.4 — What “done” looks like for v1 of live app
 
-Minimum viable live:
+Minimum viable live (updated post-picker + remote view 2026-10):
 
-- [ ] Unified app on Oracle Always Free: paper V1/V2 + live variant
-- [ ] IB Gateway + IBC/IBeam + ib_insync; weekly 2FA alert
-- [ ] Modes: `sim` → `broker_paper` → `live_dry_run` → `live`
-- [ ] Live universe: MSFT, AAPL, SMH; all-in/out; market; RTH; queue for open
-- [ ] Full fee model + after-fee vs equal-weight B&H
-- [ ] Broker-truth reconcile; never-borrow; alert→2h→stop
-- [ ] Dashboard + email (SMS optional); audit logs on host
-- [ ] Pass 2-week IB paper + dry-run before first live $1k
+- [x] Unified app on **OVH**: paper V1/V2 + live variant
+- [x] IB Gateway + IBC + ib_insync; weekly 2FA alert
+- [x] Modes: `sim` → `broker_paper` → `live_dry_run` → `live`
+- [x] Universe: **S&P picker** ≤5 (bootstrap trio only until first apply); all-in/out; market; RTH
+- [x] Full fee model + after-fee vs equal-weight B&H
+- [x] Broker-truth reconcile; never-borrow; alert→2h→stop; **whole shares only**
+- [x] Dashboard + email; audit logs on host
+- [ ] **Remote portfolio viewer** (§13): Tailscale + always-on Streamlit; live/paper/picker tabs
+- [~] Pass 2-week IB paper (G3) + dry-run before first live $1k
 
 **Answer:** **MVP checklist locked** (items above). Friends/family, TFSA, multi-cloud HA are out of v1 scope.  
 **Confidence:** high  
-**Notes:** Next artifact: `docs/live_trading_blueprint.md`.  
+**Notes:** Next: finish G3 → Phase J picker ops → Phase K remote dashboard → G4/G5. Historical Q3.6 trio remains below as pre-picker context.  
 **Defer?** no
+
 ---
 
 ## 8. Open research tasks (fact-finding)
@@ -788,6 +791,8 @@ Record each session so we don’t re-litigate.
 | 2026-09-23 | Q7.3           | Dashboard for mode/symbols/disable/ack (no SSH); secrets stay on VM                                                           | Q7.4                    |
 | 2026-09-23 | Q7.4           | **MVP checklist locked**; investigation complete → blueprint                                                                  | blueprint               |
 | 2026-09-21 | Q3.6           | Universe USD-only; **VOO replaces ZSP.TO** in V1, V2, and future live                                                                                         | (applied in configs)    |
+| 2026-10-13…17 | Picker Q&A   | **S&P 500 auto picker** locked end-to-end (universe, cadence, score, soft rotate, fees, data, apply, capital). Spec → Section 12 | implement picker        |
+| 2026-10-17 | Remote UI Q&A | Phone/laptop portfolio via **Streamlit on OVH + Tailscale**; no second IBKR login. Spec → Section 13 | Phase K / Part III |
 
 
 ---
@@ -833,7 +838,7 @@ Record each session so we don’t re-litigate.
 | Monitoring defaults   | Immediate: fills/errors/disconnects/risk/stop; daily after-fee vs B&H summary; email on; live+paper UI          | 2026-09-23 | high       |
 | Audit trail           | Log all intents/fills/fees/FX/alerts/acks; live host storage (not git); IBKR Flex backup; ≥~2y retention        | 2026-09-23 | high       |
 | Process split         | **Unified always-on home** for paper V1/V2 + live; not split across Actions vs separate live app               | 2026-09-23 | high       |
-| Hosting               | **Single Oracle Always Free VM** for now; optional later migrate to paid Canada VPS if needed                  | 2026-09-23 | high       |
+| Hosting               | **OVH Canada VPS** (Oracle Always Free abandoned)                                                               | 2026-10-07 | high       |
 | Broker connectivity   | **IB Gateway + IBC/IBeam + ib_insync**; auto-restart; weekly 2FA via user alert                                 | 2026-09-23 | high       |
 | Secrets / security    | VM env/Docker secrets; SSH keys; Gateway localhost-only; rotate + disable on leak                              | 2026-09-23 | high       |
 | Codebase              | **Extend this repo**; shared strategy; dedicated live/broker modules                                           | 2026-09-23 | high       |
@@ -845,6 +850,19 @@ Record each session so we don’t re-litigate.
 | UX surfaces           | Keep web/Streamlit dashboard + email/SMS alerts                                                                | 2026-09-23 | high       |
 | UX controls           | Dashboard: mode/symbols/disable/ack without SSH; secrets VM-only                                               | 2026-09-23 | high       |
 | v1 MVP                | Checklist in Q7.4 locked; ready for blueprint                                                                  | 2026-09-23 | high       |
+| Picker universe       | **S&P 500 only** (Wikipedia list → OVH cache + last-good fallback)                                              | 2026-10-17 | high       |
+| Picker targets        | Output feeds **paper V1 + paper V2 + live**                                                                    | 2026-10-17 | high       |
+| Picker list size      | Up to **5**; fewer OK; **0 → all cash** if none clear quality bar                                               | 2026-10-17 | high       |
+| Picker cadence        | **Every 2 weeks**; rank Sat 00:00 Eastern; email summary; apply first live-worker cycle after Monday open      | 2026-10-17 | high       |
+| Picker autonomy       | **Fully auto** — no human veto; first run applies Monday normally                                              | 2026-10-17 | high       |
+| Picker rotate         | **Soft rotate**: drop → sell on next sell signal; add → first BUY only if price > **20h SMA**                  | 2026-10-17 | high       |
+| Picker score          | After-fee edge vs per-symbol B&H; optimize buy/sell on prior **1 week**; score on latest **1 month**; hourly IBKR bars; **$1000/symbol** scoring capital | 2026-10-17 | high       |
+| Picker quality bar    | Keep names with **edge ≥ 0**; take top up to 5; no hard pre-filter (score all S&P 500)                         | 2026-10-17 | high       |
+| Picker params write   | Monday apply writes tickers **and** optimize-week buy/sell % into V1/V2/live; mid-cycle re-opt **may overwrite** % | 2026-10-17 | high       |
+| Picker capital        | **Equal weight** across active list; resize **only as cash frees** (no forced Monday rebalance)                | 2026-10-17 | high       |
+| Picker data failures  | Per-ticker: retry then skip; if **>30%** S&P fails IBKR fetch → error email + **keep previous list**           | 2026-10-17 | high       |
+| Picker email          | Ranking summary **every** biweekly run (even if list unchanged)                                                  | 2026-10-17 | high       |
+| Remote portfolio UI   | Streamlit on **OVH** via **Tailscale**; evolve `app/dashboard.py`; tabs Live/Paper/Picker; safe controls only; manual refresh; IBKR API marks via separate client id | 2026-10-17 | high       |
 
 
 ---
@@ -853,16 +871,340 @@ Record each session so we don’t re-litigate.
 
 1. ~~Blueprint~~ → `docs/live_trading_blueprint.md` (TDD prompt series)  
 2. ~~Todo~~ → `docs/live_trading_todo.md`  
-3. Implement starting at **Prompt 01**
+3. ~~Live stack + picker software~~ (Prompts 01–25, P01–P22)  
+4. **Ops:** finish **G3** + **Phase J** on OVH  
+5. **Next product layer:** **Section 13** remote dashboard — TDD prompts in blueprint **Part III (D01–…)** / todo **Phase K**
 
-Start next with: **“Implement Prompt 01”** (or paste Prompt 01 from the blueprint).
+---
+
+
+## 12. S&P 500 auto stock-picker — developer specification
+
+Developer-ready spec from the 2026-10 iterative Q&A. Implements approaches **(1) biweekly S&P rank by after-fee edge vs B&H** + **(2) soft rotate** into existing paper/live bots. Goal: **maximize after-fee edge vs equal-weight B&H** of the active list; fully automatic.
+
+**Status:** Spec locked — ready to implement. Does **not** replace Q0–Q7 live controls (RTH, whole shares, never-borrow, alert→2h→stop, broker truth); it replaces **static symbol lists** and adds a weekend ranking job.
+
+### 12.1 Goals and non-goals
+
+| In scope | Out of scope (v1 picker) |
+|----------|---------------------------|
+| Biweekly rank of all S&P 500 names on OVH | Human veto / approve-before-apply UI |
+| Soft rotate into V1, V2, and live configs | Hard flatten / forced Monday rebalance |
+| Write tickers + initial buy/sell % | Edge-weighted sleeves |
+| Wikipedia S&P membership cache | Non-S&P names, options, shorts, TSX |
+| IBKR hourly bars for ranking | Yahoo as primary ranking data |
+| Weekend summary + failure emails | SMS for ranking (email is enough) |
+| Soft entry MA gate for new symbols | Changing peak/trough strategy math |
+
+### 12.2 Functional requirements
+
+1. **Universe:** Current S&P 500 constituents only (common stocks as listed on Wikipedia’s S&P 500 page; normalize tickers for IBKR, e.g. `BRK.B` → IBKR format).
+2. **Cadence:** Every **2 weeks**. Ranking job starts **Saturday 00:00 America/New_York** (immediately after Friday’s close week).
+3. **Pipeline:** Rank weekend → persist pending selection → **email summary every run** → **apply** on the **first `live_worker` cycle after Monday US RTH open** (same apply writes paper V1/V2 configs/state symbol lists too).
+4. **Autonomy:** No veto. First ranking run (no previous list) still applies Monday normally.
+5. **List size:** Max **5**. May be **1–4**. May be **0** (all cash / no active sleeves) if no name clears the quality bar.
+6. **Quality bar:** After ranking, keep only symbols with **edge ≥ 0**; among those, take **top N ≤ 5** by edge descending. Ties: prefer higher absolute strategy return, then alphabetical ticker (deterministic).
+7. **No hard pre-filter:** Score **all** successfully fetched S&P names (do not drop by liquidity/sector heuristics in v1).
+8. **Scoring capital:** Ranking simulation uses a fixed **$1000 per symbol** (scoring assumption only — not live sleeve size).
+9. **Bars:** **Hourly**, IBKR historical (`useRTH=True` preferred, consistent with R6).
+10. **Windows:**
+    - **Optimize** buy_rise / sell_drop on the **prior 1 calendar week** of hourly bars (grid search using existing strategy optimizers / fee-aware scoring as appropriate).
+    - **Score** after-fee strategy PnL vs **buy-and-hold** of that symbol over the **latest 1 calendar month** of hourly bars, using the optimize-week thresholds.
+    - **Edge** = strategy after-fee return − B&H return (same $1000 start, same window). Fees = IBKR-style model already in `app/fees/model.py` (Tiered Pro defaults).
+11. **Apply payload:** For each selected symbol, write into V1/V2/live:
+    - ticker membership in the active universe, and
+    - initial `buy_rise` / `sell_drop` (or config equivalents) from the **optimize week**.
+12. **Mid-cycle thresholds:** Existing V1/V2 (and live, if applicable) **re-optimize on their normal schedules may overwrite** picker-written buy/sell %. Picker does not freeze thresholds for the full biweek.
+13. **Soft rotate — drop:** Symbols leaving the list stay tradable for **exits only**: allow **SELL on next sell signal**; do **not** open new BUYs after drop. Remove from active list once flat (or immediately if already cash).
+14. **Soft rotate — add:** New symbols may **BUY on the next buy signal** only if **price > 20-period SMA of hourly closes** at signal time. Gate applies to the **first fill** after join; after that, normal strategy logic (no ongoing MA gate unless later extended).
+15. **Capital (live):** Target **equal weight** across the **current active list** (1–5). Do **not** force rebalance at Monday apply. New entries size using **available spendable cash / remaining empty sleeves** (equal share of free cash among symbols that still need an entry). Dropped names free cash on sell → available to new/remaining names later.
+16. **Paper V1/V2:** Same symbol list + initial thresholds on apply. Paper sizing stays file-based truth (existing worker behavior); equal-weight soft capital rules are mandatory for **live**.
+
+### 12.3 Non-functional requirements
+
+- **Host:** Ranking job runs on **OVH** (same host as Gateway / live-worker), not GitHub Actions.
+- **Runtime:** Must finish before Monday open with margin; design for ~500 IBKR historical pulls with rate limits (batch, pacing, retries). Prefer idempotent weekend runs (safe to re-run Saturday/Sunday).
+- **Observability:** Persist run artifacts (inputs hash, per-symbol edge table, selected list, failures, pending apply marker). Email uses existing notifier path.
+- **Safety:** Ranking never places orders. Apply only mutates config/state that workers already read; live orders still go through planner / risk_limits / RTH gates.
+- **Determinism:** Same cached bars + same code → same ranking (aside from live IBKR data drift).
+
+### 12.4 Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ OVH systemd timer: Sat 00:00 America/New_York               │
+│   python -m app.picker_rank  (name TBD)                     │
+│     1. Refresh S&P list (Wikipedia → cache)                 │
+│     2. Fetch IBKR hourly bars (1w opt + 1m score windows)   │
+│     3. Optimize → score edge → select ≤5                    │
+│     4. Write pending_selection.json + ranking report        │
+│     5. Email summary (every run)                            │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ pending until Monday
+┌───────────────────────────▼─────────────────────────────────┐
+│ First live_worker cycle after Monday RTH open               │
+│   apply_pending_selection():                                │
+│     - Update live + state/ + state_v2/ symbol lists + %     │
+│     - Mark dropped (exit-only) / new (MA gate until 1st buy)│
+│     - Clear pending; audit log                              │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+   paper worker V1     paper worker V2      live_worker
+   (existing reopt     (existing reopt      (soft capital,
+    may overwrite %)    may overwrite %)     exit-only, MA gate)
+```
+
+**Suggested modules** (fit existing monorepo; names may vary):
+
+| Module | Responsibility |
+|--------|----------------|
+| `app/picker/sp500.py` | Fetch/parse Wikipedia; normalize tickers; disk cache + last-good |
+| `app/picker/bars.py` | IBKR hourly fetch for opt/score windows; retry/skip policy |
+| `app/picker/rank.py` | Optimize 1w, score 1m after-fee edge vs B&H, select top ≤5 |
+| `app/picker/pending.py` | Read/write pending selection + apply marker |
+| `app/picker/apply.py` | Monday apply into V1/V2/live configs + soft-rotate flags |
+| `app/picker/notify.py` | Build ranking / failure email bodies (reuse `notifier`) |
+| `deploy/ibgateway/picker-rank.timer` + `.service` | Biweekly Saturday schedule on OVH |
+| Existing `app/fees/model.py` | Fee estimates in ranking sim |
+| Existing `app/strategy.py` | `optimize_params` / `run_fixed_params` / `step_signal` |
+| Existing `live_worker` / `worker` | Soft-rotate flags, MA gate, equal-cash entry |
+
+### 12.5 Data handling
+
+#### 12.5.1 S&P 500 membership
+
+1. Fetch Wikipedia S&P 500 constituents table (HTTPS).
+2. On success: write OVH cache (JSON: tickers, fetched_at, source URL/etag if available).
+3. On fetch failure: use **last-good cache**. If no cache exists: fail the run (error email; no pending overwrite).
+4. Normalize symbols for IBKR contracts (share the same mapping used elsewhere if present).
+
+#### 12.5.2 IBKR bars
+
+1. For each ticker, request hourly historical closes covering at least **prior 1 week + latest 1 month** (with a small buffer for weekends/holidays). Prefer `useRTH=True`.
+2. **Per ticker failure:** retry a few times (e.g. 3 attempts with backoff). If still failing → **skip ticker** (exclude from ranking that run).
+3. **Bulk failure:** if skipped/failed tickers exceed **30%** of the S&P list size → **abort selection**:
+   - Do **not** write a new pending list (keep previous active + previous pending if any).
+   - Send **error email** with fail counts, sample failures, and “kept previous list”.
+4. Below 30% failure: rank on the successfully fetched subset only.
+
+#### 12.5.3 Artifacts (suggested paths under `state_picker/` or similar on host — not git)
+
+| Artifact | Contents |
+|----------|----------|
+| `sp500_cache.json` | Last-good constituents |
+| `ranking_runs/YYYYMMDD_HHMMSS.json` | Full edge table, windows, fee assumptions, selected set, skip list |
+| `pending_selection.json` | Symbols + buy/sell %, computed_at, apply_after (Monday RTH), run_id |
+| `active_selection.json` | Last **applied** selection + soft-rotate metadata (joined_at, exit_only, awaiting_first_buy) |
+
+Do not commit live ranking outputs to git (same policy as live audit logs).
+
+### 12.6 Soft rotate and capital — detailed behavior
+
+**State flags per symbol (conceptual):**
+
+- `active` — in current applied list; normal BUY/SELL.
+- `exit_only` — dropped this apply; SELL allowed, BUY suppressed; clear when flat.
+- `awaiting_first_buy` — newly added; BUY requires `close > SMA20(hourly)` in addition to trough buy_rise; clear after first BUY fill.
+
+**Monday apply algorithm (sketch):**
+
+1. Load `pending_selection`. If missing/stale/already applied → no-op.
+2. `new = pending - active`; `dropped = active - pending`; `kept = intersection`.
+3. For `dropped`: set `exit_only`; strip from “target universe” for new entries but keep strategy state until flat.
+4. For `new`: add with picker thresholds + `awaiting_first_buy=true`.
+5. For `kept`: update thresholds from pending **once** at apply; subsequent mid-biweek re-opts may change them again.
+6. Persist applied selection; mark pending applied; audit + optional short “applied” email (not required if weekend email already listed changes).
+
+**Live entry sizing:** When a BUY is allowed for symbol S with N active (non-exit_only) symbols and K of them already have positions, spendable sleeve ≈ `AvailableFunds / max(1, N - K)` (or equivalent equal split among symbols still flat), subject to existing whole-share / never-borrow / risk_limits. Do not sell winners solely to equalize.
+
+### 12.7 Notifications
+
+**Every biweekly ranking run (success path):** email including at least:
+
+- Run timestamp, window dates (opt week / score month)
+- Selected list (0–5) with edge, strategy return, B&H return, buy/sell %
+- Adds / drops vs current active
+- Skip count and failure %
+- Apply time rule reminder (“first live-worker cycle after Monday open”)
+- Note if first run / empty previous
+
+**Failure path (>30% bar fetch fail or hard abort):** error email; keep previous list; no apply of empty/partial junk selection.
+
+Reuse `app/notifier.py` (same SMTP path as disconnect/signal mail).
+
+### 12.8 Error handling matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| Wikipedia down, cache hit | Use last-good; note in email |
+| Wikipedia down, no cache | Abort; error email |
+| Single ticker IBKR gap | Retry → skip ticker |
+| >30% tickers fail IBKR | Abort selection; keep previous; error email |
+| Optimize/score exception on one ticker | Skip ticker; continue |
+| Zero names with edge ≥ 0 | Pending list = `[]` (all cash); still email; Monday applies empty active (exit_only on former names) |
+| Pending exists but Monday apply never runs | Keep pending; apply on next live_worker RTH cycle that qualifies; alert if pending age > N days (suggest 3) |
+| Apply partially writes configs | Use atomic write (temp + rename) per state file; record apply failure; alert; do not clear pending until all targets OK |
+| Gateway down during weekend rank | Fail run via bulk failure / connection error path; keep previous list |
+| Dual session / pacing | Respect IBKR pacing; serialize historical requests; do not starve live_worker (run ranking when live is idle overnight Sat preferred) |
+
+### 12.9 Config touchpoints (existing)
+
+Apply must update whatever the workers already use for universes/thresholds, e.g.:
+
+- `state/config.json`, `state/state.json` (V1)
+- `state_v2/config.json`, `state_v2/state.json` (V2)
+- Live config/state under the live paths already used by `app/live_worker.py` / `app/paths.py`
+
+Exact keys follow current schema (`assets` / per-symbol `buy_rise` / `sell_drop` — mirror existing field names; do not invent a parallel threshold system).
+
+### 12.10 Testing plan (TDD-friendly)
+
+Implement behind pure functions where possible; use fixtures for bars and Wikipedia HTML.
+
+#### Unit
+
+1. **S&P parse:** fixture HTML → expected ticker set; BRK.B / BF.B normalization.
+2. **Cache fallback:** mock network fail → last-good returned; no cache → raises/aborts.
+3. **Edge math:** synthetic hourly series where strategy clearly beats / loses B&H after fees; assert sign and ranking order.
+4. **Selection:** edges mixed positive/negative → only ≥0 kept, max 5; all negative → empty list.
+5. **Failure threshold:** 31% skips → abort flag; 29% → proceed.
+6. **Soft-rotate diff:** active={A,B,C}, pending={B,C,D} → drop A exit_only, add D awaiting_first_buy.
+7. **MA gate:** price below SMA20 → BUY suppressed; above → allowed when buy_rise fires.
+8. **Equal cash split:** N=3, 1 already long → next BUY uses ~½ of remaining spendable (within whole-share rounding).
+
+#### Integration (broker optional / recorded)
+
+9. **IBKR bar fetch** against paper Gateway (or recorded responses): one liquid name returns RTH hourly; assert window lengths.
+10. **Dry apply:** write pending → call apply against temp state dirs → workers’ config shows new symbols/thresholds; pending cleared.
+11. **Idempotent apply:** second apply no-ops.
+12. **Notifier:** ranking email body contains selected tickers (mock SMTP).
+
+#### Ops / soak
+
+13. Weekend timer fires on OVH in dry-run mode (`PICKER_DRY_RUN=1`) writing artifacts without applying.
+14. First real apply on paper modes before trusting live capital path.
+15. Verify mid-biweek V2 re-opt still overwrites buy/sell % after picker apply.
+
+### 12.11 Implementation sequence (suggested)
+
+1. Pure rank + select + tests (fixture bars; no IBKR).
+2. Wikipedia cache + tests.
+3. IBKR bar adapter + skip/30% policy + tests.
+4. Pending/apply writers for V1/V2/live state + soft-rotate flags.
+5. Wire MA gate + exit_only into `live_worker` (and paper workers if they should honor soft rotate the same way — **yes for consistency**).
+6. Email templates + systemd timer on OVH.
+7. Dry-run weekend → review artifact → enable apply.
+
+### 12.12 Explicit decisions log (picker Q&A)
+
+| Decision | Choice |
+|----------|--------|
+| Universe | S&P 500 only |
+| Targets | V1 + V2 + live |
+| Size | Max 5, flexible, min 0 (cash) |
+| Cadence | Biweekly; soft rotate |
+| Timing | Sat 00:00 ET rank; apply first live-worker cycle after Monday open |
+| Autonomy | Fully auto; first run applies |
+| Score | After-fee edge vs per-symbol B&H |
+| Windows | Optimize 1 week; score 1 month; hourly |
+| Fees / capital in sim | IBKR-style fees; $1000/symbol |
+| Filter / bar | No pre-filter; edge ≥ 0; top ≤ 5 |
+| Params | Write tickers + optimize-week %; mid-cycle re-opt may overwrite |
+| Host / data | OVH; IBKR bars; Wikipedia cache + last-good |
+| Missing data | Retry → skip; >30% fail → error + keep previous |
+| Drop / add | Sell on next sell; buy on next buy if >20h SMA (first entry) |
+| Sleeves | Equal weight; only as cash frees |
+| Email | Every biweekly run |
+
+### 12.13 Relationship to prior locked universe
+
+Q3.6 live starter trio (**MSFT, AAPL, SMH**) remains valid as the **pre-picker MVP**. Once Section 12 ships, the **picker active list** is the live/paper universe source of truth, and equal-weight B&H (Q0.1) tracks that dynamic list. Do not delete Q3.6 history; treat it as superseded for ongoing ops.
+
+---
+
+## 13. Remote portfolio viewer (Streamlit + Tailscale) — developer specification
+
+Developer-ready spec from the 2026-10-17 iterative Q&A. Goal: **see live + paper + picker status from phone/laptop anytime** without logging into IBKR Client Portal / a second Gateway session (which can kick the OVH bot).
+
+**Status:** Spec locked — ready to implement (blueprint Part III / todo Phase K). Does **not** place orders. Does **not** replace email alerts or SSH ops tools.
+
+### 13.1 Goals and non-goals
+
+| In scope | Out of scope (v1 remote UI) |
+|----------|------------------------------|
+| Streamlit on **OVH**, always-on via systemd | Streamlit Cloud / Power BI / paid BI tools |
+| Access via **Tailscale** (free personal) only | Public internet exposure of the dashboard |
+| Evolve existing `app/dashboard.py` | Separate remote-only app (unless later split) |
+| Tabs: **Live \| Paper V1 \| Paper V2 \| Picker** | Mode changes (`live` / `broker_paper` / …) from phone |
+| Safe controls: trading **enable/disable**, risk **ack** | Editing IB secrets, symbols, or thresholds on phone |
+| Manual refresh only | Auto-refresh / websockets |
+| Marks from **state files + IBKR API** (dedicated client id) | Yahoo-required path; Client Portal login |
+
+### 13.2 Locked answers (Q&A)
+
+| # | Topic | Decision |
+|---|--------|----------|
+| 1 | Host / access | Streamlit **on OVH** + **Tailscale** ($0 extra beyond VPS) |
+| 2 | Scope | **Everything**: live, paper V1/V2, picker |
+| 3 | Controls | **View + safe controls** (enable/disable trading, ack risk) — **not** mode changes |
+| 4 | Freshness | **Manual refresh** only |
+| 5 | Phone first screen | **Health strip** first (Gateway / worker / mode / trading on-off), then positions |
+| 6 | App password | **Tailscale only** (no Streamlit password for v1) |
+| 7 | Price / MTM | **Files + IBKR API** via **separate client id** (e.g. 9); never Client Portal |
+| 8 | Layout | **Tabs**: Live \| Paper V1 \| Paper V2 \| Picker |
+| 9 | Code shape | **Evolve** `app/dashboard.py` |
+| 10–11 | Uptime | **Always-on** systemd unit (not start-on-demand) |
+
+### 13.3 Architecture (target)
+
+```
+Phone / laptop
+  └── Tailscale → OVH private IP
+        └── systemd: streamlit-dashboard.service
+              └── streamlit run app/dashboard.py
+                    ├── reads state/, state_v2/, state_live/, state_picker/
+                    ├── optional IbkrBroker(client_id=9) for marks / snapshot
+                    └── writes only safe control files (trading_enabled, risk ack)
+IB Gateway (client_id=1 live-worker, 7 picker, 9 dashboard) — same account, API only
+```
+
+**Hard rule:** Checking the book must **not** require logging into IBKR mobile/Client Portal or starting a second Gateway/TWS desktop session.
+
+### 13.4 Live tab (minimum content)
+
+1. Health strip: Gateway/API hint (from last cycle / health artifacts if available), `live-worker` freshness, mode, trading enabled, open risk incident  
+2. Cash + positions (shares, last mark, sleeve flags if picker active: exit_only / awaiting_first_buy)  
+3. Last cycle decisions summary  
+4. Safe controls: enable/disable trading, ack risk  
+5. Optional: after-fee vs B&H snippet if equity/metrics already on disk  
+
+### 13.5 Paper + picker tabs
+
+- **Paper V1 / V2:** cash, positions, last signals / equity from `state/` and `state_v2/`  
+- **Picker:** active selection, pending (if any), last ranking run id / top names / abort flag; link or path hint to `ranking_runs/`  
+
+### 13.6 Ops / deploy
+
+- systemd unit template under `deploy/ibgateway/` (or `deploy/streamlit/`)  
+- Bind Streamlit to Tailscale IP or localhost+Tailscale serve — **not** `0.0.0.0` on the public NIC  
+- Document Tailscale install on VPS + phone + laptop in deploy README  
+- Client id for dashboard marks: default **9** (avoid 1 worker / 7 picker)
+
+### 13.7 Relationship to prior UX answers
+
+Q7.2–Q7.3 originally assumed a generic “auth-protected dashboard.” Section 13 **narrows** that to **Tailscale-gated Streamlit on OVH**, safe controls only, manual refresh, full live/paper/picker visibility. Oracle hosting mentions elsewhere are historical.
+
+---
+
 ## Appendix A — Current system snapshot (context)
 
-- **Today:** alerts + simulation; **does not** place broker orders (`README.md`).
-- **Worker:** `python -m app.worker --version v1|v2`
-- **Scheduler:** GitHub Actions (~10 minutes)
-- **Data:** yfinance hourly today; live target = IBKR free US (Cboe One/IEX)
-- **Universe:** AAPL, AMD, GOOG, MSFT, NVDA, SMH, **VOO** (replaced `ZSP.TO` 2026-09-21)
+- **Today:** paper V1/V2 + live variant on OVH; GitHub Actions / Streamlit Cloud notes in README are legacy for the free alerts path.
+- **Workers:** `python -m app.worker --version v1|v2`; `python -m app.live_worker`; `python -m app.picker_rank`
+- **Data:** live prefers IBKR RTH hourly; paper may still use yfinance; picker uses IBKR hourly
+- **Universe:** **Post-picker** biweekly S&P 500 selection ≤5 (Section 12). Pre-picker history: full paper list + live MVP trio.
+- **Remote UI (target):** Streamlit on OVH via Tailscale (Section 13)
 - **Strategy:** peak/trough thresholds; full sleeve cash ↔ shares; V2 adds constraints, trade penalty λ, holdout validation, meta reopt
 
 ## Appendix B — Cost / limit reminders (Canada / IBKR — verify before locking)

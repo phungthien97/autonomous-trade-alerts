@@ -184,14 +184,14 @@ python -m pytest tests/test_paths.py tests/test_worker_versions.py -v
 | 8.3 | Check Saturday weekly email | week 1 |
 | 8.4 | Midpoint review (week 5): spot-check AMD/NVDA re-opt rejections | week 5 |
 | 8.5 | Conclusion email fires automatically | week 10 |
-| 8.6 | Write `analysis/v2_newsletter.md` comparison report | week 10 |
+| 8.6 | Write `archive/analysis/v2_newsletter.md` comparison report | week 10 |
 
 **Acceptance:**
 - [x] `experiment_start` set in `state_v2/config.json`
-- [x] `analysis/v2_newsletter.md` draft template created
+- [x] `archive/analysis/v2_newsletter.md` draft template created
 - [ ] 10 weekly emails received
 - [ ] 1 conclusion email received
-- [ ] `analysis/v2_newsletter.md` published
+- [ ] `archive/analysis/v2_newsletter.md` published
 
 ---
 
@@ -209,7 +209,7 @@ python -m app.worker --version v2
 python -m app.weekly_report --dry-run
 
 # Regenerate comparison charts (later)
-python analysis/compare_v1_v2.py
+python archive/analysis/compare_v1_v2.py  # never landed; historical note only
 ```
 
 ---

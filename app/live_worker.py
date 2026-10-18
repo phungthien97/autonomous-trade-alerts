@@ -14,6 +14,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from app.audit.log import AuditLog
 from app.broker.memory import InMemoryBroker
@@ -21,14 +22,23 @@ from app.fees import default_ibkr_us_stock_schedule
 from app.broker.gateway import BrokerGateway
 from app.live.config import bootstrap_live_state, load_live_config
 from app.live.executor import execute_intent
-from app.notifier import notify_live_event
+from app.notifier import clear_alert_cooldown, notify_live_event
 from app.live.idempotency import IdempotencyStore
 from app.live.modes import TradingMode, parse_mode
 from app.live.planner import plan_from_signal
 from app.live.queue import PendingIntentStore
 from app.live.reconcile import LocalSleeveState, reconcile
 from app.live.session import is_us_equity_rth
-from app.paths import LivePaths
+from app.paths import LivePaths, PickerPaths, StatePaths
+from app.picker.active import (
+    clear_awaiting_first_buy,
+    clear_exit_only_if_flat,
+    load_active,
+    save_active,
+)
+from app.picker.apply import maybe_apply_pending
+from app.picker.sizing import sleeve_buy_budget
+from app.picker.trend_gate import allow_first_buy
 from app.risk.escalate import RiskController
 from app.strategy import StrategyState, portfolio_value, step_signal
 
@@ -61,6 +71,7 @@ def run_live_once(
     now_utc: datetime,
     price_by_symbol: dict[str, float],
     bar_ts_by_symbol: dict[str, str],
+    closes_by_symbol: dict[str, list[float]] | None = None,
 ) -> dict:
     bootstrap_live_state(paths.state_dir)
     config = load_live_config(paths.config_path)
@@ -70,6 +81,34 @@ def run_live_once(
         _safe_notify("trading_stopped", "No ack within 2 hours. Trading disabled.", config.alerts)
     if not risk.trading_enabled or not config.trading_enabled:
         return {"skipped": "trading_disabled"}
+
+    picker_paths = PickerPaths(project_root=paths.project_root)
+    rth_ok = is_us_equity_rth(now_utc)
+    apply_result = maybe_apply_pending(
+        picker_paths,
+        paths,
+        StatePaths(version="v1", project_root=paths.project_root),
+        StatePaths(version="v2", project_root=paths.project_root),
+        now_utc,
+        rth_ok=rth_ok,
+    )
+    if apply_result.applied:
+        _safe_notify(
+            "risk_alert",
+            f"Picker selection applied run_id={apply_result.run_id}",
+            config.alerts,
+        )
+        config = load_live_config(paths.config_path)
+    elif apply_result.reason.startswith("stale_pending"):
+        _safe_notify(
+            "risk_alert",
+            f"Picker pending not applied ({apply_result.reason}) run_id={apply_result.run_id}",
+            config.alerts,
+        )
+
+    active = load_active(picker_paths.active_selection_path)
+    active_flags = {row.symbol: row for row in (active.symbols if active else [])}
+    closes_by_symbol = closes_by_symbol or {}
 
     raw = _load_state(paths.state_path)
     assets = raw.setdefault("assets", {})
@@ -82,10 +121,21 @@ def run_live_once(
 
     fee_schedule = default_ibkr_us_stock_schedule()
     snapshot = broker.get_account_snapshot()
-    rth_ok = is_us_equity_rth(now_utc)
     actions: list[str] = []
+    decisions: list[dict] = []
     idem = IdempotencyStore(paths.idempotency_path)
     queue = PendingIntentStore(paths.queue_path)
+    active_dirty = False
+
+    n_active = sum(1 for row in (active.symbols if active else []) if not row.exit_only) or len(
+        [a for a in config.assets if a.enabled]
+    )
+    n_long = sum(
+        1
+        for symbol in config.symbols
+        if float(report.corrected.shares.get(symbol, assets.get(symbol, {}).get("shares", 0.0))) > 0
+        and not (active_flags.get(symbol) and active_flags[symbol].exit_only)
+    )
 
     for asset in config.assets:
         symbol = asset.symbol
@@ -107,13 +157,43 @@ def run_live_once(
             trough=None if stored.get("trough") is None else float(stored["trough"]),
         )
         probe = StrategyState(cash=before.cash, shares=before.shares, peak=before.peak, trough=before.trough)
-        signal, _reason = step_signal(
+        signal, signal_reason = step_signal(
             probe,
             price,
             asset.buy_rise_pct / 100.0,
             asset.sell_drop_pct / 100.0,
         )
-        intent, _why = plan_from_signal(
+        flags = active_flags.get(symbol)
+        gate_reason = None
+        if signal == "BUY" and flags is not None and flags.exit_only:
+            signal = None
+            gate_reason = "exit_only"
+            signal_reason = "exit_only blocks buy"
+        elif signal == "BUY" and flags is not None and flags.awaiting_first_buy:
+            history = closes_by_symbol.get(symbol) or []
+            if not allow_first_buy(history, price=price):
+                signal = None
+                gate_reason = "sma20_gate"
+                signal_reason = "awaiting_first_buy blocked by SMA20 gate"
+        if gate_reason is not None:
+            # Discard probe fill; keep cash sleeve and update trough only.
+            trough = before.trough
+            if before.shares <= 0:
+                trough = price if trough is None else min(float(trough), price)
+            probe = StrategyState(
+                cash=before.cash,
+                shares=before.shares,
+                peak=before.peak,
+                trough=trough,
+            )
+
+        buy_cap = None
+        if signal == "BUY":
+            # Cap to configured book (paper often has $1M IBKR cash; live ~$1k).
+            book = min(float(snapshot.spendable_usd), float(config.total_cash))
+            buy_cap = sleeve_buy_budget(book, n_active, n_long)
+
+        intent, plan_why = plan_from_signal(
             symbol,
             signal,
             before,
@@ -122,8 +202,12 @@ def run_live_once(
             snapshot,
             fee_schedule,
             bar_ts_by_symbol.get(symbol, now_utc.isoformat()),
+            buy_cash_cap=buy_cap,
         )
+        if gate_reason and intent is None and plan_why == "no signal":
+            plan_why = gate_reason
         filled = False
+        exec_status = None
         if intent is not None:
             result = execute_intent(
                 intent,
@@ -134,6 +218,7 @@ def run_live_once(
                 rth_ok,
                 queue,
             )
+            exec_status = result.status
             actions.append(f"{symbol}:{result.status}")
             raw["orders_today"] = int(raw.get("orders_today", 0)) + (1 if result.status in {"filled", "partial", "submitted"} else 0)
             if result.status == "rejected":
@@ -156,6 +241,11 @@ def run_live_once(
         if filled:
             saved.shares = float(broker.get_positions().get(symbol, saved.shares))
             saved.cash = 0.0 if saved.shares > 0 and signal == "BUY" else snapshot.cash_usd
+            if active is not None and signal == "BUY" and clear_awaiting_first_buy(active, symbol):
+                active_dirty = True
+                n_long += 1
+            if active is not None and signal == "SELL" and clear_exit_only_if_flat(active, symbol, saved.shares):
+                active_dirty = True
         assets[symbol] = {
             "cash": saved.cash,
             "shares": saved.shares,
@@ -163,6 +253,21 @@ def run_live_once(
             "trough": saved.trough,
             "last_price": price,
         }
+        decisions.append(
+            {
+                "symbol": symbol,
+                "price": price,
+                "signal": signal,
+                "signal_reason": signal_reason,
+                "plan": plan_why,
+                "action": exec_status,
+                "shares": saved.shares,
+                "peak": saved.peak,
+                "trough": saved.trough,
+                "rth_ok": rth_ok,
+                "gate": gate_reason,
+            }
+        )
         _append_equity(
             paths.equity_path,
             {
@@ -185,9 +290,20 @@ def run_live_once(
     for symbol, shares in end_report.corrected.shares.items():
         if symbol in assets:
             assets[symbol]["shares"] = shares
+        if active is not None and clear_exit_only_if_flat(active, symbol, float(shares)):
+            active_dirty = True
     raw["assets"] = assets
     _save_state(paths.state_path, raw)
-    return {"actions": actions, "mode": config.mode.value}
+    if active_dirty and active is not None:
+        save_active(picker_paths.active_selection_path, active)
+    return {
+        "actions": actions,
+        "mode": config.mode.value,
+        "decisions": decisions,
+        "rth_ok": rth_ok,
+        "cash_usd": raw.get("cash_usd"),
+        "trading_enabled": True,
+    }
 
 
 def _safe_notify(kind: str, body: str, flags: dict | None) -> None:
@@ -219,21 +335,25 @@ def _latest_prices_yahoo(symbols: list[str]) -> tuple[dict[str, float], dict[str
     return prices, bars
 
 
-def _latest_prices(symbols: list[str], broker_inner=None) -> tuple[dict[str, float], dict[str, str]]:
-    """Prefer IBKR RTH hourly TRADES bars when connected; else Yahoo (R6)."""
+def _latest_prices(
+    symbols: list[str], broker_inner=None
+) -> tuple[dict[str, float], dict[str, str], str]:
+    """IBKR RTH hourly TRADES primary; Yahoo is an explicit last-resort fallback."""
+    if not symbols:
+        return {}, {}, "no_symbols"
     if broker_inner is not None and hasattr(broker_inner, "latest_hourly_closes"):
         try:
             prices, bars = broker_inner.latest_hourly_closes(list(symbols), use_rth=True)
             if prices:
                 print(f"price_source=ibkr_rth_hourly n={len(prices)}")
-                return prices, bars
-            print("price_source=ibkr_empty; falling_back_yahoo", file=sys.stderr)
+                return prices, bars, "ibkr_rth_hourly"
+            print("price_source=ibkr_empty; yahoo_fallback", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001
-            print(f"price_source=ibkr_error ({exc}); falling_back_yahoo", file=sys.stderr)
+            print(f"price_source=ibkr_error ({exc}); yahoo_fallback", file=sys.stderr)
     prices, bars = _latest_prices_yahoo(list(symbols))
     if prices:
-        print(f"price_source=yahoo_hourly n={len(prices)}")
-    return prices, bars
+        print(f"price_source=yahoo_fallback n={len(prices)}")
+    return prices, bars, "yahoo_fallback"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -260,12 +380,28 @@ def main(argv: list[str] | None = None) -> int:
         port = 4001 if mode is TradingMode.live else int(os.environ.get("IB_PORT", "4002"))
         try:
             inner = IbkrBroker(dry_run=mode is TradingMode.live_dry_run, port=port)
+            clear_alert_cooldown("disconnect")
         except Exception as exc:  # noqa: BLE001
             print(f"ibkr_connect_failed: {exc}", file=sys.stderr)
             _safe_notify(
                 "disconnect",
-                f"IBKR connect failed on port {port}: {exc}",
+                f"IBKR connect failed on port {port}: {exc}\n"
+                f"(Further disconnect emails suppressed for ~6h until reconnect.)\n"
+                f"If AutoRestart failed: update paper login with ~/set_ib_paper_login.sh "
+                f"then: sudo systemctl restart ibgateway.service",
                 config.alerts,
+            )
+            _write_last_cycle(
+                paths,
+                {
+                    "ok": False,
+                    "error": f"ibkr_connect_failed: {exc}",
+                    "at_utc": datetime.now(timezone.utc).isoformat(),
+                    "at_eastern": datetime.now(ZoneInfo("America/Toronto")).strftime(
+                        "%Y-%m-%d %I:%M:%S %p %Z"
+                    ),
+                    "mode": config.mode.value,
+                },
             )
             return 1
     else:
@@ -274,18 +410,53 @@ def main(argv: list[str] | None = None) -> int:
     risk = RiskController(paths.risk_path)
     audit = AuditLog(paths.audit_log_path)
     now = datetime.now(timezone.utc)
-    prices, bars = _latest_prices(list(config.symbols), broker_inner=inner)
+    prices, bars, price_source = _latest_prices(list(config.symbols), broker_inner=inner)
     if not prices:
         print("No prices available; skipping cycle", file=sys.stderr)
+        _write_last_cycle(
+            paths,
+            {
+                "ok": False,
+                "error": "no_prices",
+                "at_utc": now.isoformat(),
+                "at_eastern": datetime.now(ZoneInfo("America/Toronto")).strftime(
+                    "%Y-%m-%d %I:%M:%S %p %Z"
+                ),
+                "mode": config.mode.value,
+                "price_source": price_source,
+            },
+        )
         return 1
     try:
         summary = run_live_once(paths, broker, risk, audit, now, prices, bars)
         print(summary)
+        _write_last_cycle(
+            paths,
+            {
+                "ok": True,
+                "at_utc": now.isoformat(),
+                "at_eastern": datetime.now(ZoneInfo("America/Toronto")).strftime(
+                    "%Y-%m-%d %I:%M:%S %p %Z"
+                ),
+                "mode": summary.get("mode", config.mode.value),
+                "price_source": price_source,
+                "rth_ok": summary.get("rth_ok"),
+                "cash_usd": summary.get("cash_usd"),
+                "actions": summary.get("actions", []),
+                "decisions": summary.get("decisions", []),
+                "skipped": summary.get("skipped"),
+            },
+        )
     finally:
         ib = getattr(inner, "ib", None)
         if ib is not None and getattr(ib, "isConnected", lambda: False)():
             ib.disconnect()
     return 0
+
+
+def _write_last_cycle(paths: LivePaths, payload: dict) -> None:
+    paths.state_dir.mkdir(parents=True, exist_ok=True)
+    paths.last_cycle_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

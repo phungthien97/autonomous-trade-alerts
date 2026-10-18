@@ -18,7 +18,7 @@ def live_status(paths: LivePaths | None = None) -> dict:
     chosen = _paths(paths)
     status = {
         "mode": "live_dry_run",
-        "symbols": ["MSFT", "AAPL", "SMH"],
+        "symbols": [],
         "trading_enabled": False,
         "incident": None,
         "assets": {},

@@ -1,7 +1,8 @@
 # V2 Blueprint: Parallel Bot Experiment
 
 This document is the source of truth for building V2 alongside V1.  
-Use with `docs/v2_todo.md` for step-by-step execution and tests.
+Use with `archive/docs/v2_todo.md` for step-by-step execution and tests.
+(Archived — active live docs are under `docs/live_trading_*.md`.)
 
 ---
 
@@ -259,7 +260,7 @@ python -m pytest tests/ -v
 
 ## References
 
-- V1 analysis: `analysis/newsletter.md`
+- V1 analysis: `archive/analysis/newsletter.md`
 - V1 optimizer: `app/strategy.py` → `optimize_params`
 - V1 worker: `app/worker.py` → `_reoptimize_if_due`
-- Walk-forward research: `walkforward_optimize.py`, `select_best_x_days`
+- Walk-forward research: `archive/one_offs/walkforward_optimize.py`, `select_best_x_days`; CSV outputs in `archive/research/`

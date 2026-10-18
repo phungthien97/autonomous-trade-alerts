@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+import json
 import os
 import smtplib
+import time
 from datetime import datetime
 from email.message import EmailMessage
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 EASTERN = ZoneInfo("America/Toronto")
+
+# Seconds between repeat emails for noisy kinds (disconnect every 5m cycle).
+_ALERT_COOLDOWN_SEC = {
+    "disconnect": 6 * 3600,  # one email per outage window
+    "weekly_2fa": 6 * 3600,
+}
 
 
 def format_eastern_now(when: datetime | None = None) -> str:
@@ -81,9 +90,53 @@ def send_live_event_email(subject: str, body: str) -> bool:
     return send_signal_email(subject, body)
 
 
+def alert_cooldown_path() -> Path:
+    override = os.environ.get("ALERT_COOLDOWN_PATH")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[1] / "state_live" / "alert_cooldown.json"
+
+
+def clear_alert_cooldown(kind: str, path: Path | None = None) -> None:
+    """Clear cooldown after recovery so the next outage can alert again."""
+    store = path or alert_cooldown_path()
+    if not store.is_file():
+        return
+    try:
+        data = json.loads(store.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if kind not in data:
+        return
+    data.pop(kind, None)
+    store.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _cooldown_blocks(kind: str, path: Path | None = None) -> bool:
+    sec = _ALERT_COOLDOWN_SEC.get(kind)
+    if not sec:
+        return False
+    store = path or alert_cooldown_path()
+    try:
+        data = json.loads(store.read_text(encoding="utf-8")) if store.is_file() else {}
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    last = float(data.get(kind, 0) or 0)
+    now = time.time()
+    if last and (now - last) < sec:
+        return True
+    data[kind] = now
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return False
+
+
 def notify_live_event(kind: str, body: str, flags: dict | None = None) -> bool:
     enabled = DEFAULT_ALERT_FLAGS if flags is None else {**DEFAULT_ALERT_FLAGS, **flags}
     if not enabled.get(kind, False):
+        return False
+    if _cooldown_blocks(kind):
+        print(f"alert_cooldown kind={kind} skipped_repeat_email")
         return False
     subject = _SUBJECTS.get(kind, f"Live {kind}")
     return send_live_event_email(subject, body)

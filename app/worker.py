@@ -12,6 +12,7 @@ from app.data import download_hourly, hourly_limit_start_date
 from app.meta_optimizer import run_meta_if_due, write_config as write_meta_config, _meta_is_due
 from app.notifier import send_signal_email
 from app.paths import StatePaths
+from app.picker.trend_gate import allow_first_buy
 from app.strategy import StrategyState, optimize_params, optimize_params_v2, portfolio_value, step_signal
 
 
@@ -49,6 +50,8 @@ def _normalize_assets(config: dict) -> list[dict]:
                     "x_days": int(asset.get("x_days", config.get("x_days", 20))),
                     "reopt_days": int(asset.get("reopt_days", config.get("reopt_days", 5))),
                     "enabled": bool(asset.get("enabled", True)),
+                    "exit_only": bool(asset.get("exit_only", False)),
+                    "awaiting_first_buy": bool(asset.get("awaiting_first_buy", False)),
                 }
             )
         if normalized:
@@ -336,9 +339,19 @@ def run_once(version: str = "v1", project_root: Path | None = None) -> None:
             peak=None if asset_state.get("peak") is None else float(asset_state["peak"]),
             trough=None if asset_state.get("trough") is None else float(asset_state["trough"]),
         )
+        exit_only = bool(asset_cfg.get("exit_only", False) or asset_state.get("exit_only", False))
+        awaiting_first_buy = bool(
+            asset_cfg.get("awaiting_first_buy", False) or asset_state.get("awaiting_first_buy", False)
+        )
 
         symbol_initial_cash = float(asset_state.get("initial_cash", per_asset_initial))
-        if strategy_state.cash == symbol_initial_cash and strategy_state.shares == 0.0:
+        # Soft-rotate: do not force an initial buy for exit_only / first-entry-gated names.
+        if (
+            strategy_state.cash == symbol_initial_cash
+            and strategy_state.shares == 0.0
+            and not exit_only
+            and not awaiting_first_buy
+        ):
             strategy_state.shares = symbol_initial_cash / latest_price
             strategy_state.cash = 0.0
             strategy_state.peak = latest_price
@@ -359,6 +372,9 @@ def run_once(version: str = "v1", project_root: Path | None = None) -> None:
                 },
             )
             changed_any = True
+        elif strategy_state.cash == symbol_initial_cash and strategy_state.shares == 0.0:
+            if strategy_state.trough is None:
+                strategy_state.trough = latest_price
 
         if version == "v2":
             buy_rise, sell_drop, reoptimized = _reoptimize_v2(
@@ -379,7 +395,52 @@ def run_once(version: str = "v1", project_root: Path | None = None) -> None:
                 now_utc=now_utc,
                 params_path=paths.params_path,
             )
-        action, reason = step_signal(strategy_state, latest_price, buy_rise=buy_rise, sell_drop=sell_drop)
+        probe = StrategyState(
+            cash=strategy_state.cash,
+            shares=strategy_state.shares,
+            peak=strategy_state.peak,
+            trough=strategy_state.trough,
+        )
+        action, reason = step_signal(probe, latest_price, buy_rise=buy_rise, sell_drop=sell_drop)
+        if action == "BUY" and exit_only:
+            action = None
+            reason = "exit_only blocks buy"
+            if strategy_state.shares <= 0:
+                strategy_state.trough = (
+                    latest_price
+                    if strategy_state.trough is None
+                    else min(float(strategy_state.trough), latest_price)
+                )
+        elif action == "BUY" and awaiting_first_buy:
+            closes = [float(x) for x in recent_df["Close"].tolist()]
+            if not allow_first_buy(closes, price=latest_price):
+                action = None
+                reason = "awaiting_first_buy blocked by SMA20 gate"
+                if strategy_state.shares <= 0:
+                    strategy_state.trough = (
+                        latest_price
+                        if strategy_state.trough is None
+                        else min(float(strategy_state.trough), latest_price)
+                    )
+            else:
+                strategy_state = probe
+        elif action:
+            strategy_state = probe
+        else:
+            strategy_state.peak = probe.peak
+            strategy_state.trough = probe.trough
+
+        if action == "BUY" and awaiting_first_buy:
+            awaiting_first_buy = False
+            asset_cfg["awaiting_first_buy"] = False
+            asset_state["awaiting_first_buy"] = False
+            changed_any = True
+        if action == "SELL" and exit_only and strategy_state.shares <= 0:
+            exit_only = False
+            asset_cfg["exit_only"] = False
+            asset_state["exit_only"] = False
+            changed_any = True
+
         port_val = portfolio_value(strategy_state, latest_price)
         total_value += port_val
 
@@ -440,6 +501,8 @@ def run_once(version: str = "v1", project_root: Path | None = None) -> None:
         asset_state["last_signal_reason"] = reason
         asset_state["last_bar_at"] = latest_dt.isoformat()
         asset_state["initial_cash"] = symbol_initial_cash
+        asset_state["exit_only"] = exit_only
+        asset_state["awaiting_first_buy"] = awaiting_first_buy
         last_actions.append(f"{symbol}:{asset_state['last_action']}")
         changed_any = True
 

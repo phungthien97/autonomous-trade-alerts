@@ -18,11 +18,15 @@ def test_bootstrap_and_roundtrip(tmp_path) -> None:
     assert (state_dir / "state.json").exists()
     assert (state_dir / "audit").is_dir()
     loaded = load_live_config(state_dir / "config.json")
-    assert loaded.symbols == ["MSFT", "AAPL", "SMH"]
+    # Empty until picker apply (or active_selection present).
+    assert loaded.symbols == []
+    assert loaded.allow_fractional_default is False
     loaded.mode = TradingMode.broker_paper
     loaded.total_cash = 1500.0
+    loaded.symbols = ["AAPL"]
     save_live_config(state_dir / "config.json", loaded)
     again = load_live_config(state_dir / "config.json")
     assert again.mode is TradingMode.broker_paper
     assert again.total_cash == 1500.0
+    assert again.symbols == ["AAPL"]
     assert isinstance(again, LiveConfig)

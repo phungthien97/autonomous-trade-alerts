@@ -1,0 +1,13 @@
+[Unit]
+Description=Biweekly S&P picker ranking (Sat 00:00 America/New_York)
+
+[Timer]
+# Saturday ~00:00 Eastern. Host clock is UTC; 04:00 UTC = midnight EDT.
+# (Winter EST ≈ 05:00 UTC — acceptable; CLI as_of uses America/New_York.)
+# CLI skips if a successful run landed within 13 days unless PICKER_FORCE=1.
+OnCalendar=Sat *-*-* 04:00:00
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

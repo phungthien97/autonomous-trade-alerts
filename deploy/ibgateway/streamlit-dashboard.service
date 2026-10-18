@@ -1,0 +1,22 @@
+[Unit]
+Description=Remote Streamlit portfolio dashboard (Tailscale access)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/autonomous-trade-alerts
+Environment=DASHBOARD_IB_CLIENT_ID=9
+Environment=PYTHONPATH=/opt/autonomous-trade-alerts
+Environment=GATEWAY_HEALTH_LOG=/home/ubuntu/ibc/logs/gateway-health.log
+EnvironmentFile=-/opt/autonomous-trade-alerts/.env
+# Default: localhost only. Prefer Tailscale Serve, or set address to the Tailscale IP
+# in a drop-in override — do NOT bind 0.0.0.0 on the public NIC.
+# PYTHONPATH required so `import app.*` works when Streamlit runs app/dashboard.py as a script.
+ExecStart=/opt/autonomous-trade-alerts/.venv/bin/streamlit run app/dashboard.py --server.headless true --server.address 127.0.0.1 --server.port 8501
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

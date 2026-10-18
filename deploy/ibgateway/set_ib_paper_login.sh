@@ -35,4 +35,10 @@ for key in ("IbLoginId", "IbPassword"):
             break
 PY
 echo
+echo "Saved. Next steps:"
+echo "  sudo systemctl restart ibgateway.service"
+echo "  # wait ~30-60s"
+echo "  ss -ltn | grep 4002"
+echo "  sudo systemctl start live-worker.timer"
+echo
 echo "Done. You can close this window (type: exit)."

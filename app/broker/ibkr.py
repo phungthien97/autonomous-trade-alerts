@@ -146,6 +146,61 @@ class IbkrBroker:
                 bars[symbol] = str(date)
         return prices, bars
 
+    def historical_hourly_closes(
+        self,
+        symbol: str,
+        *,
+        start,
+        end,
+        use_rth: bool = True,
+    ) -> list[tuple]:
+        """Hourly TRADES closes for ``symbol`` covering ``[start, end]`` dates.
+
+        Returns list of ``(timestamp, close)``. Empty list if unavailable.
+        """
+        from datetime import date as date_cls
+        from datetime import datetime as datetime_cls
+        from datetime import timezone as tz
+        from zoneinfo import ZoneInfo
+
+        et = ZoneInfo("America/New_York")
+        start_d = start if isinstance(start, date_cls) else start
+        end_d = end if isinstance(end, date_cls) else end
+        days = max(1, (end_d - start_d).days + 7)
+        duration = f"{min(days, 365)} D"
+        end_dt = datetime_cls(end_d.year, end_d.month, end_d.day, 23, 59, 59, tzinfo=et)
+        end_str = end_dt.astimezone(tz.utc).strftime("%Y%m%d %H:%M:%S")
+
+        contract = _stock_contract(symbol)
+        qualified = self.ib.qualifyContracts(contract)
+        if not qualified:
+            return []
+        hist = self.ib.reqHistoricalData(
+            qualified[0],
+            endDateTime=end_str,
+            durationStr=duration,
+            barSizeSetting="1 hour",
+            whatToShow="TRADES",
+            useRTH=use_rth,
+            formatDate=2,
+            keepUpToDate=False,
+        )
+        if hasattr(self.ib, "sleep"):
+            self.ib.sleep(0.5)
+        out: list[tuple] = []
+        for bar in hist or []:
+            raw = bar.date
+            if hasattr(raw, "isoformat"):
+                ts = raw if isinstance(raw, datetime_cls) else datetime_cls.fromisoformat(str(raw))
+            else:
+                ts = datetime_cls.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=tz.utc)
+            d = ts.astimezone(et).date()
+            if start_d <= d <= end_d:
+                out.append((ts, float(bar.close)))
+        return out
+
 
 def _pick_usd_amount(by_tag: dict[str, dict[str, float]], tag: str) -> float:
     row = by_tag.get(tag) or {}

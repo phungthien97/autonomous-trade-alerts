@@ -1,0 +1,16 @@
+[Unit]
+Description=S&P 500 picker weekend ranking
+After=ibgateway.service network.target
+Wants=ibgateway.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/autonomous-trade-alerts
+Environment=DISPLAY=:1
+Environment=IB_CLIENT_ID=7
+EnvironmentFile=-/opt/autonomous-trade-alerts/.env
+# J1: keep --dry-run until ranking_runs/ reviewed; then drop --dry-run (J2).
+# --no-email until SMTP path confirmed for picker subjects.
+# Client id 7 avoids clash with live-worker (usually clientId 1).
+ExecStart=/opt/autonomous-trade-alerts/.venv/bin/python -m app.picker_rank --dry-run --no-email

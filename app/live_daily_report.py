@@ -28,7 +28,7 @@ def _last_equity(path: Path) -> dict[str, float]:
 def build_summary(paths: LivePaths | None = None) -> str:
     chosen = paths or LivePaths()
     config = load_live_config(chosen.config_path) if chosen.config_path.exists() else None
-    symbols = config.symbols if config else ["MSFT", "AAPL", "SMH"]
+    symbols = list(config.symbols) if config else []
     start = config.total_cash if config else 1000.0
     values = _last_equity(chosen.equity_path)
     bot_end = sum(values.get(symbol, start / max(len(symbols), 1)) for symbol in symbols)

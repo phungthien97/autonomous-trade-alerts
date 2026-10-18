@@ -98,3 +98,39 @@ class LivePaths:
     @property
     def risk_path(self) -> Path:
         return self.state_dir / "risk.json"
+
+    @property
+    def alert_cooldown_path(self) -> Path:
+        return self.state_dir / "alert_cooldown.json"
+
+    @property
+    def last_cycle_path(self) -> Path:
+        return self.state_dir / "last_cycle.json"
+
+
+@dataclass(frozen=True)
+class PickerPaths:
+    """Paths for S&P picker artifacts under state_picker/ (or a custom project root)."""
+
+    project_root: Path | None = None
+
+    @property
+    def state_dir(self) -> Path:
+        base = self.project_root if self.project_root is not None else ROOT
+        return base / "state_picker"
+
+    @property
+    def sp500_cache_path(self) -> Path:
+        return self.state_dir / "sp500_cache.json"
+
+    @property
+    def pending_selection_path(self) -> Path:
+        return self.state_dir / "pending_selection.json"
+
+    @property
+    def active_selection_path(self) -> Path:
+        return self.state_dir / "active_selection.json"
+
+    @property
+    def ranking_runs_dir(self) -> Path:
+        return self.state_dir / "ranking_runs"

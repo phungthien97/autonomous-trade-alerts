@@ -51,9 +51,12 @@ Add these repository secrets:
 - Streamlit free tier usually requires a **public repository**.
 - yfinance intraday limits apply (roughly 730 days for hourly, ~60 days for 15m).
 - This app's paper workers send **alerts only**.
-- **Live mode can place real IBKR orders.** Read `docs/live_trading_blueprint.md` and `deploy/ibgateway/README.md` before enabling it. Modes are `sim` → `broker_paper` → `live_dry_run` → `live`. Live requires `LIVE_TRADING_CONFIRM=YES`. Default seed config is `live_dry_run` for MSFT, AAPL, and SMH.
+- **Live mode can place real IBKR orders.** Read `docs/README.md` (index), then `docs/live_trading_blueprint.md` and `deploy/ibgateway/README.md` before enabling it. Modes are `sim` → `broker_paper` → `live_dry_run` → `live`. Live requires `LIVE_TRADING_CONFIRM=YES`. Live symbols come from the **S&P picker** (bootstrap list only until first Monday apply). IBKR equities are **whole shares only**.
 - Checklist: `docs/live_trading_todo.md`.
-- Oracle SSH keys are documented in `deploy/ibgateway/README.md` (they stay in `C:\Users\phung\.ssh\`, not in git).
+- **S&P 500 auto picker** (biweekly rank → soft rotate into V1/V2/live): spec in `docs/live_trading_investigation.md` §12; TDD prompts in `docs/live_trading_blueprint.md` Part II; CLI `python -m app.picker_rank [--dry-run]`.
+- **Remote portfolio viewer:** Streamlit on OVH via **Tailscale** (investigation §13 / blueprint Part III). Tabs Live / Paper / Picker; safe controls only. Do **not** log into IBKR just to check positions. Deploy: `deploy/ibgateway/streamlit-dashboard.service`.
+- OVH SSH / Gateway ops: `deploy/ibgateway/README.md` (keys stay under `~/.ssh`, not in git).
+- Historical paper V2 / newsletters / ZSP research: under `archive/` (see `docs/README.md`).
 
 ## State files
 
@@ -62,3 +65,4 @@ Add these repository secrets:
 - `state/trades.csv`: trade/event history
 - `state/equity.csv`: portfolio value history
 - `state/params_history.csv`: threshold re-optimization history
+- `state_picker/`: picker cache, pending/active selection, `ranking_runs/` (host artifacts; gitignored)

@@ -1,147 +1,33 @@
-# Live Trading Build Checklist
+# Live Trading + S&P Picker + Remote Viewer Checklist
 
-Work **prompt-by-prompt** from `docs/live_trading_blueprint.md` §5.  
-Each software step is **test-driven**. Do not skip ahead to real IBKR orders until Prompt 25 is green and ops Phase G prerequisites are met.
+**Blueprint:** `docs/live_trading_blueprint.md` (live 01–25 · picker **P01–P22** · remote **D01–D08**)  
+**Spec:** `docs/live_trading_investigation.md` (§0–7 live · **§12 picker** · **§13 remote viewer**)  
+**Host:** OVH `15.235.62.2` (not Oracle)
 
-Mark `[x]` when done. Update findings for research IDs in `docs/live_trading_investigation.md`.
+Mark `[x]` when done. Paste each blueprint ```text``` prompt standalone into the implementer LLM. Test-driven; keep V1/V2/live tests green.
 
 ---
 
 ## How to use
 
-1. Open the matching **Prompt NN** block in `docs/live_trading_blueprint.md`.  
-2. Paste that entire ```text``` prompt into a code-generation LLM (standalone — do not rely on chat memory).  
-3. Run the listed tests; fix until green.  
-4. Check the box below.  
-5. Commit when you (human) are ready.
+1. Open the matching prompt in the blueprint.  
+2. Implement tests first → code → wire (no orphans).  
+3. Check the box; commit when you choose.  
+4. **Do not** fund real money (G4/G5) until G3 graduation is done.  
+5. **Picker (Phase H)** software done; **Phase J** ops + **Phase K** remote viewer can proceed in parallel with finishing G3.
 
 ---
 
-## Phase A — Pure domain (Prompts 01–09)
+## Phase A–F — Live stack software (DONE)
 
-**Goal:** No broker; pure functions + file stores; all unit tested.
+Prompts **01–25** shipped. Do not re-litigate unless a regression appears.
 
-| Done | Prompt | Deliverable | Primary tests |
-|------|--------|-------------|----------------|
-| [x] | 01 | `app/fees/` fee model | `tests/test_fees_model.py` |
-| [x] | 02 | RTH + open queue | `tests/test_live_session.py`, `tests/test_live_queue.py` |
-| [x] | 03 | Idempotency store | `tests/test_live_idempotency.py` |
-| [x] | 04 | Share sizing | `tests/test_live_sizing.py` |
-| [x] | 05 | Never-borrow check | `tests/test_live_risk_limits.py` |
-| [x] | 06 | Audit JSONL log | `tests/test_audit_log.py` |
-| [x] | 07 | After-fee B&H metrics | `tests/test_live_metrics.py` |
-| [x] | 08 | Risk alert→2h→stop | `tests/test_risk_escalate.py` |
-| [x] | 09 | Live modes + `state_live` paths | `tests/test_live_config.py`, `tests/test_live_paths.py` |
-
-**Phase A acceptance:**
-- [x] `pytest` on all new tests above green  
-- [x] Existing V1/V2 tests still green  
-
-```bash
-python -m pytest tests/test_fees_model.py tests/test_live_session.py tests/test_live_queue.py tests/test_live_idempotency.py tests/test_live_sizing.py tests/test_live_risk_limits.py tests/test_audit_log.py tests/test_live_metrics.py tests/test_risk_escalate.py tests/test_live_config.py tests/test_live_paths.py -v
-python -m pytest tests/test_strategy_v1_regression.py tests/test_paths.py tests/test_worker_versions.py -v
-```
-
----
-
-## Phase B — Broker port + dry execution (Prompts 10–13)
-
-**Goal:** Swappable `BrokerClient`; memory broker; planner + dry executor.
-
-| Done | Prompt | Deliverable | Primary tests |
-|------|--------|-------------|----------------|
-| [x] | 10 | `BrokerClient` + `InMemoryBroker` | `tests/test_broker_memory.py` |
-| [x] | 11 | Reconcile (broker wins) | `tests/test_live_reconcile.py` |
-| [x] | 12 | Order intent planner | `tests/test_live_planner.py` |
-| [x] | 13 | `execute_intent` dry/live-memory | `tests/test_live_executor.py` |
-
-**Phase B acceptance:**
-- [x] Dry-run path never mutates broker when mode says dry  
-- [x] Outside RTH queues; idempotency skips duplicates  
-
-```bash
-python -m pytest tests/test_broker_memory.py tests/test_live_reconcile.py tests/test_live_planner.py tests/test_live_executor.py -v
-```
-
----
-
-## Phase C — Live worker integration (Prompts 14–15)
-
-**Goal:** `python -m app.live_worker` cycle with injected memory broker; safe CLI modes.
-
-| Done | Prompt | Deliverable | Primary tests |
-|------|--------|-------------|----------------|
-| [x] | 14 | `app/live_worker.py` cycle | `tests/test_live_worker_cycle.py` |
-| [x] | 15 | CLI mode banners + `LIVE_TRADING_CONFIRM` | mode/CLI tests in worker tests |
-
-**Phase C acceptance:**
-- [x] Two-cycle BUY/SELL works with `InMemoryBroker`  
-- [x] `live` without confirm env exits non-zero  
-- [x] Paper `app.worker` v1/v2 unchanged  
-
-```bash
-python -m pytest tests/test_live_worker_cycle.py -v
-python -m app.worker --version v1
-```
-
----
-
-## Phase D — IBKR adapter (Prompts 16–17)
-
-**Goal:** Real adapter code with **mocked** unit tests; optional manual Gateway smoke later.
-
-| Done | Prompt | Deliverable | Primary tests |
-|------|--------|-------------|----------------|
-| [x] | 16 | `IbkrBroker` + `ib_insync` dep | `tests/test_broker_ibkr.py` |
-| [x] | 17 | Partial fill + cancel residual | executor/broker tests updated |
-
-**Phase D acceptance:**
-- [x] CI/unit tests never need a live Gateway  
-- [x] `--broker ibkr` wired (manual smoke optional)  
-
-```bash
-python -m pytest tests/test_broker_ibkr.py tests/test_live_executor.py -v
-```
-
----
-
-## Phase E — Alerts, risk wiring, dashboard (Prompts 18–20)
-
-**Goal:** Email events; risk tick stops trading; dashboard disable/ack without SSH.
-
-| Done | Prompt | Deliverable | Primary tests |
-|------|--------|-------------|----------------|
-| [x] | 18 | Notifier live events | notifier tests (SMTP mocked) |
-| [x] | 19 | RiskController wired into worker | escalate + worker tests |
-| [x] | 20 | Dashboard live controls | `tests/test_live_controls.py` |
-
-**Phase E acceptance:**
-- [x] 2h escalate disables trading in automated test  
-- [x] Dashboard helpers disable/ack/enable touch only `state_live`  
-- [x] V1/V2 dashboard paths still work  
-
-```bash
-python -m pytest tests/test_risk_escalate.py tests/test_live_controls.py -v
-```
-
----
-
-## Phase F — Reports, guards, docs, E2E harness (Prompts 21–25)
-
-**Goal:** Daily summary; hard mode guards; README; deploy templates; memory E2E regression.
-
-| Done | Prompt | Deliverable | Primary tests |
-|------|--------|-------------|----------------|
-| [x] | 21 | `app/live_daily_report.py` | report tests |
-| [x] | 22 | Mode submit guards / wrapper | guard tests |
-| [x] | 23 | `state_live` seed + `.env.example` + README | bootstrap tests |
-| [x] | 24 | `deploy/ibgateway/` templates + import smoke | file existence / import script |
-| [x] | 25 | Memory E2E harness | `tests/test_live_e2e_memory.py` |
-
-**Phase F acceptance:**
-- [x] `pytest tests/test_live_e2e_memory.py -v` green  
-- [x] Full suite green including legacy V1/V2 tests  
-- [x] README links blueprint + this todo  
+| Area | Status |
+|------|--------|
+| Fees, RTH, sizing, never-borrow, audit, metrics, risk escalate | [x] |
+| Broker port, reconcile, planner, executor, `live_worker`, modes | [x] |
+| `IbkrBroker`, notifier, dashboard controls, daily report | [x] |
+| Mode guards, seed `state_live`, deploy templates, memory E2E | [x] |
 
 ```bash
 python -m pytest tests/ -v
@@ -150,67 +36,239 @@ python scripts/check_live_imports.py
 
 ---
 
-## Phase G — Human ops (not LLM prompts)
-
-**Goal:** Real Gateway and money ladder. Start only after Phase F acceptance.
+## Phase G — Ops ladder (money / Gateway)
 
 | Done | Step | Notes |
 |------|------|--------|
-| [x] | G0 | **OVHcloud VPS Canada** `15.235.62.2` — Ubuntu, Java, Gateway 10.50, IBC, app synced |
-| [x] | G1 | Gateway+IBC paper logged in (acct `DUR235447`); API **4002**; smoke OK (cash 1M) |
-| [x] | G1b | Unattended: `xvfb` + `ibgateway` systemd, IBC `AutoRestartTime=11:45 PM` UTC, 2FA relogin=yes (2026-10-06) |
-| [x] | G2 | Local + OVH smoke; CAD/BASE snapshot fix; email alerts configured (2026-10-07) |
-| [~] | G3 | `broker_paper` via `live-worker.timer` (5m). Clock from **2026-10-05**; need ≥2 weeks + graduation |
-| [ ] | G4 | Fund taxable live ~$1k USD; `live_dry_run` several sessions |
-| [ ] | G5 | Explicit go-ahead; `LIVE_TRADING_CONFIRM=YES`; mode `live` |
-| [ ] | G6 | Week-1 monitoring; reconcile fees vs Flex (R2) |
-| [~] | G7 | Research closed except R8 (accountant); doc findings updated 2026-10-07 |
+| [x] | G0 | OVH VPS + Gateway 10.50 + IBC + app sync |
+| [x] | G1 | Paper API **4002** (`DUR235447`); smoke OK |
+| [x] | G1b | systemd xvfb/ibgateway; AutoRestart; 2FA relogin |
+| [x] | G2 | Email alerts; CAD/BASE snapshot; health timers |
+| [~] | G3 | `broker_paper` since **2026-10-05**; soak through **2026-10-19** RTH; checklist below |
+| [ ] | G4 | Fund ~$1k USD taxable; `live_dry_run` several sessions |
+| [ ] | G5 | Go-ahead; `LIVE_TRADING_CONFIRM=YES`; mode `live` |
+| [ ] | G6 | Week-1 monitor; reconcile fees vs Flex |
+| [ ] | G7 | R8 accountant note (only open research item) |
 
-### Graduation checklist (before leaving broker_paper)
+### G3 graduation (before G4)
 
-- [ ] No unexpected / duplicate orders  
-- [ ] Fills match intent (symbol, side, size rules)  
-- [ ] Never-borrow never violated  
-- [ ] Fees logged; after-fee vs B&H computable  
-- [ ] Disconnect/reject handling safe  
-- [ ] ≥1 BUY and ≥1 SELL observed (or forced path test)  
+Evidence from OVH review **2026-10-17** (paper `DUR235447`, mode `broker_paper`):
+
+| Check | Status | Notes |
+|-------|--------|--------|
+| Services up | OK | xvfb / ibgateway / live-worker.timer / gateway-health / :4002 |
+| Price path | OK | `price_source=ibkr_rth_hourly` |
+| ≥2 weeks soak | [~] | Started **2026-10-05**; calendar gate **2026-10-19** (Mon) |
+| No unexpected / duplicate orders | [~] | Audit empty until 2026-10-18; **no fills yet** (see blocker) |
+| Fills match intent | [ ] | Needs ≥1 RTH fill |
+| Never-borrow never violated | [~] | No borrow attempts observed; risk.json clean |
+| Fees logged; after-fee vs B&H | [~] | Fee model + `live_daily_report` exist; need fill + report sample |
+| Disconnect/reject handling | [~] | Zombie restarts work; 2026-10-17 FAIL+cooldown window then recovery |
+| ≥1 BUY and ≥1 SELL | [ ] | **Blocked until Mon RTH** — see below |
+| Gateway health / no alert spam | [~] | Health OK majority; FAIL count low vs OK |
+
+**Blocker found + fixed (2026-10-17):** sleeve cash was **$333.33** (`total_cash` 1000 ÷ 3) while MSFT/AAPL/SMH are >$330, so whole-share qty was always **0** (`zero quantity`) for ~12 days — **zero fills, empty audit**. OVH patched: `total_cash=3000`, per-sleeve cash `$1000`, `allow_fractional_default=false`. Immediate cycle → **`AAPL:queued`** (outside RTH). Local planner also fixed so `buy_cash_cap` is not clamped by stale sleeve cash (deploy with next sync).
+
+**Monday 2026-10-19 RTH plan:**
+
+1. Confirm `AAPL` BUY submits/fills (or re-plans in RTH); audit `order_submitted`/`fill`.  
+2. After fill, force or wait for a SELL (tighten `sell_drop_pct` temporarily if needed).  
+3. Re-run checklist; only then mark G3 `[x]`. Do **not** start G4 early.
+
+---
+
+## Phase H — S&P 500 auto picker (EXPAND SCOPE)
+
+Implement blueprint **Part II** prompts **P01–P22** in order. Spec: investigation §12.
+
+### H1 — Pure domain (P01–P08)
+
+| Done | Prompt | Deliverable | Primary tests |
+|------|--------|-------------|----------------|
+| [x] | P01 | `state_picker` paths | `tests/test_picker_paths.py` |
+| [x] | P02 | Ticker normalize (BRK.B etc.) | `tests/test_picker_tickers.py` |
+| [x] | P03 | Wikipedia S&P parse + last-good cache | `tests/test_picker_sp500.py` |
+| [x] | P04 | Opt 1w / score 1m windows | `tests/test_picker_windows.py` |
+| [x] | P05 | After-fee strategy vs B&H scorer | `tests/test_picker_score.py` |
+| [x] | P06 | Optimize week → score month (one symbol) | `tests/test_picker_rank_symbol.py` |
+| [x] | P07 | Select top ≤5, edge ≥ 0 (0 = cash) | `tests/test_picker_select.py` |
+| [x] | P08 | >30% fetch-fail abort policy | `tests/test_picker_failures.py` |
+
+**H1 acceptance:** pure functions only; no IBKR calls; pytest green on tests above.
+
+### H2 — Bars + fetch (P09–P10)
+
+| Done | Prompt | Deliverable | Primary tests |
+|------|--------|-------------|----------------|
+| [x] | P09 | `HourlyBarProvider` + fixture + retries | `tests/test_picker_bars_provider.py` |
+| [x] | P10 | Batch fetch + abort if >30% fail | `tests/test_picker_fetch_universe.py` |
+
+### H3 — Pending / soft-rotate / active (P11–P13)
+
+| Done | Prompt | Deliverable | Primary tests |
+|------|--------|-------------|----------------|
+| [x] | P11 | `pending_selection.json` store | `tests/test_picker_pending.py` |
+| [x] | P12 | Soft-rotate plan (exit_only / awaiting_first_buy) | `tests/test_picker_soft_rotate.py` |
+| [x] | P13 | `active_selection.json` store | `tests/test_picker_active.py` |
+
+### H4 — Apply into live + V1 + V2 (P14–P16)
+
+| Done | Prompt | Deliverable | Primary tests |
+|------|--------|-------------|----------------|
+| [x] | P14 | Apply → `state_live` config | `tests/test_picker_apply_live.py` |
+| [x] | P15 | Apply → `state/` + `state_v2/` | `tests/test_picker_apply_paper.py` |
+| [x] | P16 | `apply_pending_selection` (atomic, idempotent) | `tests/test_picker_apply.py` |
+
+**H4 acceptance:** temp dirs only in tests; first run (empty active) applies; empty selection → prior names `exit_only`.
+
+### H5 — Worker gates (P17–P20)
+
+| Done | Prompt | Deliverable | Primary tests |
+|------|--------|-------------|----------------|
+| [x] | P17 | 20h SMA first-buy gate | `tests/test_picker_trend_gate.py` |
+| [x] | P18 | Equal free-cash sleeve budget | `tests/test_picker_sizing.py` |
+| [x] | P19 | Wire gates into `live_worker` | `tests/test_live_picker_gates.py` (or extend live worker tests) |
+| [x] | P20 | Wire exit_only / list into paper `worker` | `tests/test_worker_picker_flags.py` |
+
+**H5 acceptance:** exit_only blocks BUY; SMA gate fail-closed; mid-cycle re-opt still overwrites %; no forced Monday rebalance.
+
+### H6 — Rank job, email, CLI, IBKR, ops, E2E (P21–P22)
+
+| Done | Prompt | Deliverable | Primary tests |
+|------|--------|-------------|----------------|
+| [x] | P21 | `run_ranking` + ranking/failure emails | `tests/test_picker_run.py`, `tests/test_picker_notify.py` |
+| [x] | P22 | CLI `app.picker_rank`, IBKR provider, Monday apply hook, timer units, E2E, gitignore, README | `tests/test_picker_e2e.py` + provider unit tests |
+
+**H6 acceptance:**
+
+- [x] `python -m app.picker_rank --dry-run` writes report only  
+- [x] Success path writes pending + email every run  
+- [x] >30% IBKR fail → keep previous list + error email  
+- [x] `live_worker` applies pending on first Monday RTH cycle  
+- [x] `deploy/ibgateway/picker-rank.timer` documented  
+- [x] `state_picker/` gitignored; E2E <5s green  
+- [x] Full `pytest tests/ -v` green (164 passed, 2026-10-17)  
+
+```bash
+python -m pytest tests/test_picker_*.py tests/test_live_picker_gates.py tests/test_worker_picker_flags.py -v
+python -m pytest tests/ -v
+```
+
+---
+
+## Phase I — Cleanup (REMOVE UNNECESSARY)
+
+Goal: one clean bot — **picker-driven universe**, **IBKR-first data**, **OVH-only ops**. Delete or retire dead weight; do not leave parallel “old universe” paths.
+
+### I1 — Code & config
+
+- [x] Stop treating **MSFT/AAPL/SMH** as the permanent live universe; defaults become “last applied picker list” (bootstrap empty / `active_selection` until first apply)  
+- [x] Remove / stop maintaining **static full paper lists** as the long-term source of truth once picker apply owns V1/V2 symbols  
+- [x] Live bars: **IBKR RTH hourly primary**; Yahoo only as explicit fallback (or remove if unused after soak)  
+- [x] Delete or archive root one-offs that are not part of the app (e.g. `walkforward_optimize.py` → `archive/one_offs/`)  
+- [x] Strip dashboard copy that still teaches **`ZSP.TO` / TSX** as current universe  
+- [x] Remove **fractional-by-default** live assumptions; whole shares only on IBKR API (R3)  
+- [x] Ensure no dual sizing paths that ignore `sleeve_buy_budget` / soft-rotate flags  
+- [x] Drop unused imports, dead helpers, and commented-out Oracle/Always-Free deploy scraps in active scripts  
+
+### I2 — Deploy / ops clutter
+
+- [x] Keep: `gateway-health`, `status`/`check_bot`, login helpers, picker timer, live-worker timer  
+- [x] Review one-off probes (`probe_*.py`, `diagnose_*`, `fix_health_*`): keep in `deploy/ibgateway/` only if still used; else move to `archive/` or delete  
+- [x] README / deploy docs: **OVH only** — no “provision Oracle Always Free” as current path  
+- [x] Confirm `.gitignore` covers `state_picker/`, audit logs, `.env`  
+
+### I3 — Docs hygiene
+
+- [x] Todo/blueprint “next action” points at picker + G3 — not Oracle MVP prose  
+- [x] Investigation historical Q3.6 trio stays as history; active ops follow §12  
+- [x] No duplicate conflicting universe instructions across README / todo / dashboard  
+
+**I acceptance:** grep shows no active guidance to trade `ZSP.TO`; live defaults not hard-locked to the trio after first picker apply; pytest still green (**164 passed, 2026-10-17**).
+
+---
+
+## Phase J — Picker ops on OVH (after H6)
+
+| Done | Step | Notes |
+|------|------|--------|
+| [x] | J1 | Timer installed; forced dry-run **ok** (`run_id=20261018_002339`, selected FICO/COHR/GEN/AKAM/MOS, `pending_written=False`) |
+| [ ] | J2 | Enable pending writes (drop `--dry-run` from unit); confirm weekend summary email |
+| [ ] | J3 | Monday apply via `live_worker` (paper paths first if staging) |
+| [ ] | J4 | Confirm soft-rotate + SMA gate in RTH; equal cash as frees |
+| [ ] | J5 | Confirm mid-biweek V1/V2 re-opt still overwrites buy/sell % |
+| [ ] | J6 | Only then rely on picker for live sleeves (still behind G4/G5 money ladder) |
+
+---
+
+## Phase K — Remote portfolio viewer (EXPAND SCOPE)
+
+Implement blueprint **Part III** prompts **D01–D08**. Spec: investigation §13.  
+**Access:** Tailscale → always-on Streamlit on OVH. **Do not** use IBKR Client Portal / second Gateway to check the book.
+
+### K1 — Software (D01–D08)
+
+| Done | Prompt | Deliverable | Primary tests |
+|------|--------|-------------|----------------|
+| [x] | D01 | Live/paper/picker status loaders | `tests/test_remote_status.py` |
+| [x] | D02 | Health strip helpers | `tests/test_remote_health.py` |
+| [x] | D03 | Live tab UI (health → positions) | `app/remote/ui.py` + dashboard tabs |
+| [x] | D04 | Paper V1 / V2 tabs | dashboard + loaders |
+| [x] | D05 | Picker tab | dashboard + ranking meta |
+| [x] | D06 | Safe controls only (no mode change) | `tests/test_remote_controls_scope.py` |
+| [x] | D07 | IBKR marks via client id **9** | `tests/test_remote_marks.py` |
+| [x] | D08 | systemd unit + Tailscale deploy docs | `streamlit-dashboard.service` + README |
+
+**K1 acceptance:** tabs Live | Paper V1 | Paper V2 | Picker; health first; manual refresh; safe controls only; pytest green.
+
+### K2 — OVH ops
+
+- [x] Install Tailscale on VPS + phone + laptop (free personal)  
+- [x] Enable `streamlit-dashboard.service` on OVH (`127.0.0.1:8501`, HTTP 200)  
+- [x] Open via Tailscale Serve: `https://vps-338e3236.tail03235c.ts.net/` (tailnet only)  
+- [ ] Confirm marks path uses client id 9 (no clash with worker=1 / picker=7)  
+- [ ] Confirm enable/disable + ack work from phone without SSH  
+
+**K acceptance:** can view live/paper/picker and use safe controls from phone over Tailscale without logging into IBKR.
 
 ---
 
 ## Research tracker
 
-| ID | Task | Status | Finding |
-|----|------|--------|---------|
-| R1 | IBKR Canada paper + API path | closed | OVH: IB API, paper 4002, acct DUR235447, CAD paper cash readable. Remake in `deploy/ibgateway/README.md` |
-| R2 | Full fee model numbers; Fixed vs Tiered; λ $ | closed | **Choose IBKR Pro Tiered** (min $0.35 vs Fixed $1). Model in `app/fees/model.py` (2026-10-07 IBKR Pro US rates). λ for ~1-share live sleeves ≈ **$1–2.5** (`estimate_lambda_per_trip`); paper V2 λ=20 stays for continuity. FX funding: **auto** (0.03%) below ~$6.7k. G6 still reconciles vs Flex after fills. |
-| R3 | Fractionals MSFT/AAPL/SMH | closed | 2026-10-07 paper probe: contract `sizeIncrement=0.0001` (desktop OK) but API **Error 10243** — fractional equities **cannot** be placed via API. Bot must use **whole shares** on IBKR path. VOO same. |
-| R4 | Buying-power fields for never-borrow | closed | Paper `DUR235447`: TotalCashValue CAD 1M; **AvailableFunds** ≈ 1,000,043; **BuyingPower** ≈ 3.33M (leverage — ignore). Bot spendable = AvailableFunds; never-borrow ignores BuyingPower. Probe: `deploy/ibgateway/probe_buying_power.py`. |
-| R5 | Gateway+IBC unattended; weekly 2FA | closed | **OVH** (Oracle abandoned): xvfb+ibgateway+timers active; `AutoRestartTime=11:45 PM`; `ReloginAfterSecondFactor…=yes`; **`TWOFA_TIMEOUT_ACTION=restart`** (fixed 2026-10-07); email alerts on; `gateway-health.sh` emails weekly_2fa when IBC logs look like IB Key wait. Phone approve still required when IB asks. |
-| R6 | IBKR free US bars quality | closed | 2026-10-07 OVH probe: IBKR paper hourly **TRADES** bars OK for MSFT/AAPL/SMH/VOO. RTH ~35 bars/5d; last close matches Yahoo within **≤0.002%**. Prefer `useRTH=True` (Yahoo/`prepost` adds ~45 ext-hour bars). Worker now uses IB RTH hourly when `--broker ibkr`, Yahoo fallback. Probe: `deploy/ibgateway/probe_us_bars.py`. |
-| R8 | Accountant note on frequency | open | Human |
-| R9 | Complimentary US streaming/historical API | closed | Historical API confirmed with R6 on paper (`DUR235447`). Streaming quotes not required for peak/trough hourly signals; live worker uses IB historical hourly closes. |
+| ID | Status | One-line finding |
+|----|--------|------------------|
+| R1 | closed | Paper API 4002 on OVH |
+| R2 | closed | IBKR Pro Tiered; model in `app/fees/model.py`; G6 reconciles Flex |
+| R3 | closed | API fractionals fail (10243) → **whole shares only** |
+| R4 | closed | Spendable = **AvailableFunds**; ignore BuyingPower |
+| R5 | closed | Gateway+IBC unattended on OVH; weekly 2FA alert |
+| R6 | closed | IBKR RTH hourly OK; prefer over Yahoo prepost |
+| R8 | **open** | Accountant note on trade frequency (human) |
+| R9 | closed | Complimentary historical hourly sufficient |
+| R10 | closed | Portfolio view = Streamlit on OVH + Tailscale; never second IBKR login (§13) |
 
 ---
 
 ## Progress log
 
-| Date | Completed through | Notes |
-|------|-------------------|-------|
-| 2026-10-05 | OVH VPS delivered | `vps-338e3236.vps.ovh.ca` / `15.235.62.2` / Ubuntu `ubuntu`. Awaiting first SSH + Gateway install. |
-| 2026-10-05 | G1 paper Gateway on OVH | Paper login OK (`DUR235447`); port 4002; `IbkrBroker` snapshot OK. Next: keep Gateway up + broker_paper. |
-| 2026-10-05 | G3 broker_paper started | `live-worker.timer` every 5m; mode `broker_paper`; first cycles seed troughs (no fills yet). Markets closed evenings — orders only in RTH. |
-| 2026-10-06 | Gateway daily exit | Quit ~23:45 UTC (Auto Logoff); no autorestart file → stayed down. |
-| 2026-10-06 | Harden autorestart | systemd xvfb+ibgateway; AutoRestartTime 11:45 PM UTC; smoke OK again. |
-| 2026-10-06 | Monitoring | gateway-health.timer 00:15+12:15 UTC; email helper `set_email_alerts.sh`; worker emails on IB connect fail. |
-| 2026-10-07 | Email alerts live | Gmail app password working; test mail received. |
-| 2026-10-07 | R3 fractionals | API Error 10243 for MSFT/AAPL/SMH/VOO; bot forced to whole shares on IBKR path. |
-| 2026-10-07 | R2 fees / λ | Tiered chosen; fee model + Fixed schedule + FX auto/manual + `estimate_lambda_per_trip`. |
-| 2026-10-07 | R6/R9 IB bars | Paper hourly TRADES ≈ Yahoo; worker prefers IB RTH hourly + Yahoo fallback. |
-| 2026-10-07 | R5 unattended/2FA | TWOFA_TIMEOUT_ACTION=restart; health script weekly_2fa detect; R5 closed. |
-| 2026-10-07 | R4 buying power | AvailableFunds=spendable; BuyingPower ignored; R4 closed. |
+| Date | Notes |
+|------|--------|
+| 2026-10-05 | OVH + paper Gateway; G3 `broker_paper` timer started |
+| 2026-10-06 | Autorestart hardened; health + email monitoring |
+| 2026-10-07 | R2–R6/R9 closed; Tiered fees; whole shares; IB bars; AvailableFunds |
+| 2026-10-12…13 | Gateway zombie / health CRLF / disconnect cooldown ops fixes |
+| 2026-10-17 | Picker spec §12 + blueprint Part II locked; todo expanded (H/I/J); cleanup phase added |
+| 2026-10-17 | Phase H P01–P22 + Phase I cleanup done (picker-driven defaults, archive probes/one-offs, OVH docs) |
+| 2026-10-17 | G3 review: no fills (sleeve $333 &lt; share price); OVH sleeves → $1000; AAPL BUY queued for Mon RTH |
+| 2026-10-17 | Deployed app+picker to OVH; wiki UA fix; picker-rank.timer on; full S&P dry-run in progress (client 7) |
+| 2026-10-17 | Remote viewer §13 + blueprint Part III (D01–D08) + todo Phase K locked |
+| 2026-10-17 | J1 dry-run ok (FICO/COHR/GEN/AKAM/MOS); Phase K software D01–D08 landed |
 
 ---
 
 ## Next action
 
-**Wait out G3** (≥2 weeks `broker_paper` from 2026-10-05; target ~2026-10-19). Do **not** start G4/G5 (real money) early.
+1. **K2** — install Tailscale (you) + enable `streamlit-dashboard.service` on OVH.  
+2. **G3 Mon 2026-10-19 RTH** — confirm AAPL fill + one SELL; do **not** start G4/G5 early.  
+3. **J2** — after reviewing dry-run report, drop `--dry-run` from `picker-rank.service` when ready.  
+4. After J + G3 (+ K2): only then consider G4.

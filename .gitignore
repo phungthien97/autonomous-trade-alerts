@@ -15,3 +15,13 @@ ssh-key-*.key.pub
 *.pem
 .pytest_cache/
 deploy/ibgateway/gw-login-debug*.png
+state_live/alert_cooldown.json
+state_live/audit/
+state_live/trades.csv
+state_live/equity.csv
+state_live/queue.json
+state_live/idempotency.json
+state_live/risk.json
+state_live/last_cycle.json
+state_picker/*
+!state_picker/.gitkeep

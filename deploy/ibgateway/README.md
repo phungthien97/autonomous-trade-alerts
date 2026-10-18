@@ -40,12 +40,37 @@ Use this doc to **recreate** every Gateway/API step when moving from Windows pap
 | `xvfb.service` | Virtual display `:1` |
 | `ibgateway.service` | IBC + Gateway (`Restart=always`) |
 | `live-worker.timer` | Worker every 5 minutes |
+| `picker-rank.timer` | S&P picker ranking Sat ~00:00 ET (04:00 UTC) |
+| `streamlit-dashboard.service` | Remote portfolio UI (Tailscale; §13) |
 
 ```bash
-sudo systemctl status xvfb ibgateway live-worker.timer
+sudo systemctl status xvfb ibgateway live-worker.timer picker-rank.timer streamlit-dashboard.service
 sudo journalctl -u ibgateway.service -n 80 --no-pager
 ss -ltn | grep 4002
 ```
+
+### Remote portfolio dashboard (Streamlit + Tailscale)
+
+**Spec:** `docs/live_trading_investigation.md` §13. Check the book **without** logging into IBKR Client Portal / a second Gateway.
+
+1. Install **Tailscale** (free personal) on the VPS, your phone, and your laptop; join the same tailnet.
+2. On the VPS:
+
+```bash
+cd /opt/autonomous-trade-alerts
+sudo cp deploy/ibgateway/streamlit-dashboard.service /etc/systemd/system/
+sudo sed -i 's/\r$//' /etc/systemd/system/streamlit-dashboard.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now streamlit-dashboard.service
+```
+
+3. Reach the UI privately (pick one):
+   - **Tailscale Serve** (recommended): `sudo tailscale serve --bg 8501` then open the Serve URL from phone/laptop
+   - Or SSH tunnel: `ssh -L 8501:127.0.0.1:8501 ubuntu@100.x.y.z` then `http://127.0.0.1:8501`
+4. Do **not** bind Streamlit to `0.0.0.0` on the public NIC.
+5. IBKR marks on the Live tab use **`DASHBOARD_IB_CLIENT_ID=9`** (worker=1, picker=7).
+
+Tabs: **Live | Paper V1 | Paper V2 | Picker**. Safe controls only (enable/disable trading, ack risk) — no mode changes from the phone UI.
 
 **IBC daily Auto-Restart:** `AutoRestartTime=11:45 PM` (UTC on this host) so the nightly exit **restarts with token** instead of staying down. `TWOFA_TIMEOUT_ACTION=restart` + `ReloginAfterSecondFactorAuthenticationTimeout=yes` for weekly IB Key (still approve on phone).
 
@@ -71,6 +96,18 @@ python -c "import asyncio; asyncio.set_event_loop(asyncio.new_event_loop()); fro
 ```bash
 sudo systemctl status live-worker.timer
 journalctl -u live-worker.service -n 50 --no-pager
+```
+
+**S&P picker ranking:** Saturday 00:00 America/New_York (`picker-rank.timer`). CLI skips if a successful run is under 13 days old unless `PICKER_FORCE=1` / `--force`. Prefer one `--dry-run` review of `state_picker/ranking_runs/` before enabling pending writes.
+
+```bash
+sudo cp deploy/ibgateway/picker-rank.service /etc/systemd/system/
+sudo cp deploy/ibgateway/picker-rank.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now picker-rank.timer
+cd /opt/autonomous-trade-alerts && . .venv/bin/activate
+python -m app.picker_rank --dry-run --no-email --force
+journalctl -u picker-rank.service -n 50 --no-pager
 ```
 
 **Email alerts (phone):** on the VPS run `~/set_email_alerts.sh` and enter Gmail + App Password + recipient. Then fills/rejects/disconnects/2FA/Gateway health emails work.
@@ -157,7 +194,7 @@ Copy/paste and check off when deploying paper on OVH, then again for live.
 - [ ] **Paper Trading Account** requested under Settings → Paper Trading Account (separate username/password)
 - [ ] Paper login written down offline (not in git / not in this README)
 - [ ] Trading permissions include **US stocks/ETFs**
-- [ ] For **live** funding later: convert CAD→USD in chunks; hold **USD cash** for MSFT/AAPL/SMH (no per-trade auto-FX)
+- [ ] For **live** funding later: convert CAD→USD in chunks; hold **USD cash** for picker-selected US names (no per-trade auto-FX)
 
 ### B. Install Gateway
 
@@ -263,19 +300,27 @@ Done on the developer PC while Oracle Ampere capacity was unavailable. **Repeat 
 
 ## Probes (research)
 
+Kept in-tree for occasional re-checks. One-shot diagnose/fractional scripts live under `archive/ibgateway_probes/`.
+
 ```bash
 cd /opt/autonomous-trade-alerts && . .venv/bin/activate
-# R3 — fractionals (API rejects; whole shares only)
-python deploy/ibgateway/probe_fractionals.py
 # R4 — TotalCashValue / AvailableFunds / BuyingPower (never size on BuyingPower)
 IB_CLIENT_ID=95 python deploy/ibgateway/probe_buying_power.py
 # R6 — IBKR free hourly TRADES vs Yahoo (prefer useRTH)
 IB_CLIENT_ID=91 python deploy/ibgateway/probe_us_bars.py
+# R3 — fractionals (archived; API rejects → whole shares only)
+# python archive/ibgateway_probes/probe_fractionals.py
 ```
 
 **R4 finding (2026-10-07):** AvailableFunds ≈ cash (same-day spendable); BuyingPower ≈ 3.33× on paper margin — ignored for never-borrow.
 
 **R5:** `TWOFA_TIMEOUT_ACTION=restart` in `/opt/ibc/gatewaystart.sh`; `gateway-health.sh` emails `weekly_2fa` when recent IBC logs look like an IB Key wait.
+
+**Outage lesson (2026-10-12):** Gateway can leave port **4002 listening** while the IB session is dead (“zombie”) — worker then times out on account/positions. Cause that day: mid-session re-login showed `Unrecognized Username or Password` at 04:14 UTC after a healthy AutoRestart at 23:45. Health checks had been broken since Oct 9 because `gateway-health.sh` was saved with **Windows CRLF** (`status=203/EXEC`). Fix: always `sed -i 's/\r$//'` after SCP; health script now **probes the API** (not just the port), **restarts zombie Gateway**, and runs **hourly**.
+
+**Worker resume (2026-10-17):** Health used to **stop** `live-worker.timer` on Gateway failure but only restart it in the same run as a successful Gateway restart. If Gateway recovered later (IB Key, AutoRestart, etc.), the timer stayed inactive forever. Health now **starts** `live-worker.timer` whenever status is OK and the timer is inactive.
+
+**Zombie + cooldown (2026-10-17):** Port 4002 can stay LISTEN while the IB session is dead. Health stops the worker (correct). A 6h restart cooldown after *any* restart attempt used to block retries even when the first restart failed — timer stayed off for hours. Now: **6h cooldown only after a successful recovery**; failed restart retries after **30 minutes**.
 
 **R6 finding (2026-10-07):** paper historical 1h bars match Yahoo last close (≤0.002%); live worker uses IB RTH hourly when `--broker ibkr`, Yahoo fallback. Minimal hosts need `tzdata` in the venv (in `requirements.txt`).
 

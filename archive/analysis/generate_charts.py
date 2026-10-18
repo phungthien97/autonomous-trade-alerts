@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.patches import Patch
 
-ROOT = Path(__file__).resolve().parents[1]
+# Script lives under archive/analysis/ — repo root is two levels up.
+ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / "state"
 OUT = Path(__file__).resolve().parent / "charts"
 

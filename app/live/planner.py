@@ -30,11 +30,15 @@ def plan_from_signal(
     account_snapshot: AccountSnapshot,
     fee_schedule: FeeSchedule,
     bar_ts: str,
+    buy_cash_cap: float | None = None,
 ) -> tuple[OrderIntent | None, str]:
     if signal not in ("BUY", "SELL"):
         return None, "no signal"
     if signal == "BUY":
-        budget = min(strategy_state.cash, account_snapshot.spendable_usd)
+        # buy_cash_cap (equal free-cash sleeve) is the budget when set; do not
+        # clamp to stale per-symbol sleeve cash that can block whole-share buys.
+        cash = float(buy_cash_cap) if buy_cash_cap is not None else float(strategy_state.cash)
+        budget = min(cash, account_snapshot.spendable_usd)
         qty = buy_share_quantity(budget, price, allow_fractional)
         if qty <= 0:
             return None, "zero quantity"

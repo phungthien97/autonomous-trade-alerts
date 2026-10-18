@@ -46,3 +46,23 @@ def test_hold_returns_none() -> None:
     )
     assert intent is None
     assert reason == "no signal"
+
+
+def test_buy_cash_cap_overrides_stale_sleeve_cash() -> None:
+    # Sleeve cash too small for 1 share; equal-weight cap from spendable is enough.
+    state = StrategyState(cash=333.0, shares=0.0, peak=None, trough=90.0)
+    snap = AccountSnapshot(3000.0, 3000.0, 3000.0, available_funds_usd=3000.0)
+    intent, reason = plan_from_signal(
+        "AAPL",
+        "BUY",
+        state,
+        350.0,
+        False,
+        snap,
+        default_ibkr_us_stock_schedule(),
+        "bar-4",
+        buy_cash_cap=1000.0,
+    )
+    assert reason == "planned"
+    assert intent is not None
+    assert intent.quantity == 2.0

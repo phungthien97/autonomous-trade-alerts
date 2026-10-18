@@ -8,7 +8,7 @@
     {"symbol": "SMH", "buy_rise_pct": 2.0, "sell_drop_pct": 4.0, "enabled": true}
   ],
   "trading_enabled": true,
-  "allow_fractional_default": true,
+  "allow_fractional_default": false,
   "fee_schedule_name": "default_ibkr_us_stock",
   "alerts": {
     "fill": true,

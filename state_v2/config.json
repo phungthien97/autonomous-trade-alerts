@@ -70,7 +70,7 @@
       "enabled": true
     },
     {
-      "symbol": "ZSP.TO",
+      "symbol": "VOO",
       "buy_rise_pct": 1.5,
       "sell_drop_pct": 2.5,
       "x_days": 20,
