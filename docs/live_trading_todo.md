@@ -193,7 +193,7 @@ Goal: one clean bot — **picker-driven universe**, **IBKR-first data**, **OVH-o
 | Done | Step | Notes |
 |------|------|--------|
 | [x] | J1 | Timer installed; forced dry-run **ok** (`run_id=20261018_002339`, selected FICO/COHR/GEN/AKAM/MOS, `pending_written=False`) |
-| [~] | J2 | Unit live (no `--dry-run` / no `--no-email`); force verify run in progress 2026-10-18 — mark `[x]` when pending + email confirmed |
+| [x] | J2 | Pending writes on; force run `20261018_151053` → FICO/COHR/GEN/SKYD/INTC, `pending_written=True`, apply_after Mon 2026-10-19 13:30Z |
 | [ ] | J3 | Monday apply via `live_worker` (paper paths first if staging) |
 | [ ] | J4 | Confirm soft-rotate + SMA gate in RTH; equal cash as frees |
 | [ ] | J5 | Confirm mid-biweek V1/V2 re-opt still overwrites buy/sell % |
@@ -264,11 +264,12 @@ Implement blueprint **Part III** prompts **D01–D08**. Spec: investigation §13
 | 2026-10-17 | Remote viewer §13 + blueprint Part III (D01–D08) + todo Phase K locked |
 | 2026-10-17 | J1 dry-run ok (FICO/COHR/GEN/AKAM/MOS); Phase K software D01–D08 landed |
 | 2026-10-18 | K2 done: marks client id 9 (`marks=ibkr`); Disable/Enable/Ack verified over Tailscale; trading left ON |
+| 2026-10-18 | J2: dropped dry-run/no-email; force run wrote pending (FICO/COHR/GEN/SKYD/INTC) for Mon apply |
 
 ---
 
 ## Next action
 
 1. **G3 Mon 2026-10-19 RTH** — confirm AAPL fill + one SELL; do **not** start G4/G5 early.
-2. Finish **J2** verify (pending file + summary email from force run), then wait for **J3** Monday apply.
+2. **J3** — Monday apply of pending (FICO/COHR/GEN/SKYD/INTC) via `live_worker` after 13:30Z.
 3. After J + G3: only then consider G4.
