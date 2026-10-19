@@ -26,9 +26,11 @@ def select_symbols(
     results: Sequence[Mapping[str, Any] | Any],
     max_n: int = 5,
 ) -> list[SelectedSymbol]:
-    """Keep non-skipped rows with edge >= 0; top ``max_n`` by edge.
+    """Keep names that beat B&H and made money; top ``max_n`` by strategy profit.
 
-    Tie-break: higher ``strategy_return``, then alphabetical ``symbol``.
+    Filters: not skipped, ``edge >= 0``, ``strategy_return >= 0``.
+    Rank by ``strategy_return`` descending (maximize sleeve dollars).
+    Tie-break: higher ``edge``, then alphabetical ``symbol``.
     """
     if max_n < 0:
         raise ValueError("max_n must be >= 0")
@@ -48,6 +50,8 @@ def select_symbols(
         strategy_return = _get(row, "strategy_return")
         if buy_rise is None or sell_drop is None or strategy_return is None:
             continue
+        if float(strategy_return) < 0:
+            continue
         bh_return = _get(row, "bh_return")
         eligible.append(
             SelectedSymbol(
@@ -60,5 +64,5 @@ def select_symbols(
             )
         )
 
-    eligible.sort(key=lambda s: (-s.edge, -s.strategy_return, s.symbol))
+    eligible.sort(key=lambda s: (-s.strategy_return, -s.edge, s.symbol))
     return eligible[:max_n]

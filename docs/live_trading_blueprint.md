@@ -820,7 +820,7 @@ Create or extend app/picker/rank.py with select_symbols(...) and tests/test_pick
 Requirements:
 - Input: list of per-symbol results with symbol, edge, strategy_return, buy_rise, sell_drop, skipped flag.
 - Drop skipped and edge < 0.
-- Sort by edge descending; ties → higher strategy_return then alphabetical symbol.
+- Filter: edge ≥ 0 and strategy_return ≥ 0. Sort by strategy_return descending; ties → higher edge then alphabetical symbol (Hybrid B, 2026-10-18).
 - Take at most max_n=5 (configurable default 5).
 - Empty list allowed (all cash).
 

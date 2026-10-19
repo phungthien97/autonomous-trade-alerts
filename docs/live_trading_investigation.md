@@ -857,7 +857,7 @@ Record each session so we don’t re-litigate.
 | Picker autonomy       | **Fully auto** — no human veto; first run applies Monday normally                                              | 2026-10-17 | high       |
 | Picker rotate         | **Soft rotate**: drop → sell on next sell signal; add → first BUY only if price > **20h SMA**                  | 2026-10-17 | high       |
 | Picker score          | After-fee edge vs per-symbol B&H; optimize buy/sell on prior **1 week**; score on latest **1 month**; hourly IBKR bars; **$1000/symbol** scoring capital | 2026-10-17 | high       |
-| Picker quality bar    | Keep names with **edge ≥ 0**; take top up to 5; no hard pre-filter (score all S&P 500)                         | 2026-10-17 | high       |
+| Picker quality bar    | Keep **edge ≥ 0** and **strategy_return ≥ 0**; top ≤5 by **strategy_return** (Hybrid B); score all S&P 500   | 2026-10-18 | high       |
 | Picker params write   | Monday apply writes tickers **and** optimize-week buy/sell % into V1/V2/live; mid-cycle re-opt **may overwrite** % | 2026-10-17 | high       |
 | Picker capital        | **Equal weight** across active list; resize **only as cash frees** (no forced Monday rebalance)                | 2026-10-17 | high       |
 | Picker data failures  | Per-ticker: retry then skip; if **>30%** S&P fails IBKR fetch → error email + **keep previous list**           | 2026-10-17 | high       |
@@ -903,7 +903,7 @@ Developer-ready spec from the 2026-10 iterative Q&A. Implements approaches **(1)
 3. **Pipeline:** Rank weekend → persist pending selection → **email summary every run** → **apply** on the **first `live_worker` cycle after Monday US RTH open** (same apply writes paper V1/V2 configs/state symbol lists too).
 4. **Autonomy:** No veto. First ranking run (no previous list) still applies Monday normally.
 5. **List size:** Max **5**. May be **1–4**. May be **0** (all cash / no active sleeves) if no name clears the quality bar.
-6. **Quality bar:** After ranking, keep only symbols with **edge ≥ 0**; among those, take **top N ≤ 5** by edge descending. Ties: prefer higher absolute strategy return, then alphabetical ticker (deterministic).
+6. **Quality bar (Hybrid B, 2026-10-18):** After ranking, keep only symbols with **edge ≥ 0** *and* **strategy_return ≥ 0**; among those, take **top N ≤ 5** by **strategy_return** descending (maximize sleeve dollars while still beating that symbol’s B&H). Ties: prefer higher edge, then alphabetical ticker (deterministic).
 7. **No hard pre-filter:** Score **all** successfully fetched S&P names (do not drop by liquidity/sector heuristics in v1).
 8. **Scoring capital:** Ranking simulation uses a fixed **$1000 per symbol** (scoring assumption only — not live sleeve size).
 9. **Bars:** **Hourly**, IBKR historical (`useRTH=True` preferred, consistent with R6).

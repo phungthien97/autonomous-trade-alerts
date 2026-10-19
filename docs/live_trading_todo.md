@@ -91,7 +91,7 @@ Implement blueprint **Part II** prompts **P01–P22** in order. Spec: investigat
 | [x] | P04 | Opt 1w / score 1m windows | `tests/test_picker_windows.py` |
 | [x] | P05 | After-fee strategy vs B&H scorer | `tests/test_picker_score.py` |
 | [x] | P06 | Optimize week → score month (one symbol) | `tests/test_picker_rank_symbol.py` |
-| [x] | P07 | Select top ≤5, edge ≥ 0 (0 = cash) | `tests/test_picker_select.py` |
+| [x] | P07 | Select top ≤5: edge≥0 **and** strategy≥0, rank by strategy profit (Hybrid B) | `tests/test_picker_select.py` |
 | [x] | P08 | >30% fetch-fail abort policy | `tests/test_picker_failures.py` |
 
 **H1 acceptance:** pure functions only; no IBKR calls; pytest green on tests above.
@@ -193,7 +193,7 @@ Goal: one clean bot — **picker-driven universe**, **IBKR-first data**, **OVH-o
 | Done | Step | Notes |
 |------|------|--------|
 | [x] | J1 | Timer installed; forced dry-run **ok** (`run_id=20261018_002339`, selected FICO/COHR/GEN/AKAM/MOS, `pending_written=False`) |
-| [x] | J2 | Pending writes on; force run `20261018_151053` → FICO/COHR/GEN/SKYD/INTC, `pending_written=True`, apply_after Mon 2026-10-19 13:30Z |
+| [x] | J2 | Pending writes on; force run `20261018_151053`; **reselected Hybrid B** → P/FICO/HUM/AMGN/VLO (was edge-ranked FICO/COHR/GEN/SKYD/INTC) |
 | [ ] | J3 | Monday apply via `live_worker` (paper paths first if staging) |
 | [ ] | J4 | Confirm soft-rotate + SMA gate in RTH; equal cash as frees |
 | [ ] | J5 | Confirm mid-biweek V1/V2 re-opt still overwrites buy/sell % |
@@ -265,11 +265,12 @@ Implement blueprint **Part III** prompts **D01–D08**. Spec: investigation §13
 | 2026-10-17 | J1 dry-run ok (FICO/COHR/GEN/AKAM/MOS); Phase K software D01–D08 landed |
 | 2026-10-18 | K2 done: marks client id 9 (`marks=ibkr`); Disable/Enable/Ack verified over Tailscale; trading left ON |
 | 2026-10-18 | J2: dropped dry-run/no-email; force run wrote pending (FICO/COHR/GEN/SKYD/INTC) for Mon apply |
+| 2026-10-18 | Picker select → Hybrid B (edge≥0 + strategy≥0, rank by strategy profit); pending rewritten P/FICO/HUM/AMGN/VLO |
 
 ---
 
 ## Next action
 
 1. **G3 Mon 2026-10-19 RTH** — confirm AAPL fill + one SELL; do **not** start G4/G5 early.
-2. **J3** — Monday apply of pending (FICO/COHR/GEN/SKYD/INTC) via `live_worker` after 13:30Z.
+2. **J3** — Monday apply of pending (P/FICO/HUM/AMGN/VLO) via `live_worker` after 13:30Z.
 3. After J + G3: only then consider G4.
