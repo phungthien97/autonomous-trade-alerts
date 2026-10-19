@@ -61,3 +61,4 @@ Datetime,Action,Price,Shares_After,Cash_After,Portfolio_Value,buy_rise_pct,sell_
 2026-10-16T23:00:00+00:00,SELL,335.64,0.0,955.7596206443984,955.7596206443984,1.0,2.5,Price dropped from rolling peak threshold,GOOG
 2026-10-16T23:00:00+00:00,BUY,699.71,1.429163510597247,0.0,1000.0,1.0,1.5,Initial full allocation,VOO
 2026-10-19T10:00:00+00:00,BUY,548.25,2.267989628454487,0.0,1243.4253138001725,1.5,1.0,Price rose from rolling trough threshold,AMD
+2026-10-19T16:30:00+00:00,SELL,541.5399780273438,0.0,1228.2070535594864,1228.2070535594864,1.5,1.0,Price dropped from rolling peak threshold,AMD
