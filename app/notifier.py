@@ -30,11 +30,18 @@ def format_eastern_now(when: datetime | None = None) -> str:
 
 
 def _with_eastern_timestamp(body: str) -> str:
+    """Append Eastern wall-clock as a footer so the headline stays first."""
     stamp = format_eastern_now()
-    text = body or ""
+    text = (body or "").rstrip()
+    if not text:
+        return f"—\nSent: {stamp}\n"
+    last = text.splitlines()[-1]
+    if last.startswith("Sent:") or last.startswith("Time:"):
+        return text + "\n"
     if text.startswith("Time:"):
-        return text
-    return f"Time: {stamp}\n\n{text}"
+        # Legacy bodies that already stamped at the top — leave unchanged.
+        return text + "\n"
+    return f"{text}\n\n—\nSent: {stamp}\n"
 
 
 def send_signal_email(subject: str, body: str) -> bool:
@@ -74,15 +81,19 @@ DEFAULT_ALERT_FLAGS = {
     "risk_alert": True,
     "trading_stopped": True,
     "weekly_2fa": True,
+    "picker_applied": True,
+    "picker_stale": True,
 }
 
 _SUBJECTS = {
-    "fill": "Live FILL",
-    "reject": "Live order REJECTED",
-    "disconnect": "Live broker DISCONNECT",
-    "risk_alert": "Live RISK alert",
-    "trading_stopped": "Live trading STOPPED",
-    "weekly_2fa": "Live weekly 2FA required",
+    "fill": "[LIVE] Trade filled",
+    "reject": "[LIVE] Order rejected",
+    "disconnect": "[LIVE] Broker disconnected",
+    "risk_alert": "[LIVE] Needs attention",
+    "trading_stopped": "[LIVE] Trading stopped",
+    "weekly_2fa": "[LIVE] Weekly 2FA required",
+    "picker_applied": "[PICKER] New sleeves applied",
+    "picker_stale": "[PICKER] Pending not applied",
 }
 
 

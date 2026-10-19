@@ -78,7 +78,22 @@ def run_live_once(
     broker = broker if isinstance(broker, BrokerGateway) else BrokerGateway(broker, config.mode)
     stopped_now = risk.tick(now_utc)
     if stopped_now:
-        _safe_notify("trading_stopped", "No ack within 2 hours. Trading disabled.", config.alerts)
+        _safe_notify(
+            "trading_stopped",
+            "\n".join(
+                [
+                    "Trading was auto-stopped",
+                    "",
+                    "What happened",
+                    "  A risk alert sat unacknowledged for 2 hours.",
+                    "  The live worker will not place new orders until you re-enable trading.",
+                    "",
+                    "What to do",
+                    "  Ack the incident on the dashboard (or risk control), then re-enable trading.",
+                ]
+            ),
+            config.alerts,
+        )
     if not risk.trading_enabled or not config.trading_enabled:
         return {"skipped": "trading_disabled"}
 
@@ -94,15 +109,38 @@ def run_live_once(
     )
     if apply_result.applied:
         _safe_notify(
-            "risk_alert",
-            f"Picker selection applied run_id={apply_result.run_id}",
+            "picker_applied",
+            "\n".join(
+                [
+                    "New picker sleeves are now live",
+                    "",
+                    "What this means",
+                    "  Weekend ranking was applied to live + paper books.",
+                    "  Soft-rotate rules are in effect (exit-only drops, awaiting first buy).",
+                    "",
+                    "Details",
+                    f"  Run id: {apply_result.run_id}",
+                ]
+            ),
             config.alerts,
         )
         config = load_live_config(paths.config_path)
     elif apply_result.reason.startswith("stale_pending"):
         _safe_notify(
-            "risk_alert",
-            f"Picker pending not applied ({apply_result.reason}) run_id={apply_result.run_id}",
+            "picker_stale",
+            "\n".join(
+                [
+                    "Pending picker selection was NOT applied",
+                    "",
+                    "What this means",
+                    "  The queued weekend ranking is past its apply window.",
+                    "  Current sleeves stay unchanged until the next successful ranking.",
+                    "",
+                    "Details",
+                    f"  Reason: {apply_result.reason}",
+                    f"  Run id: {apply_result.run_id}",
+                ]
+            ),
             config.alerts,
         )
 
@@ -227,14 +265,76 @@ def run_live_once(
                 raw["reject_streak"] = 0
             if raw["reject_streak"] >= 3:
                 risk.trigger("reject_storm", now_utc)
-                _safe_notify("risk_alert", "Repeated order rejects.", config.alerts)
+                _safe_notify(
+                    "risk_alert",
+                    "\n".join(
+                        [
+                            "Repeated order rejects",
+                            "",
+                            "What happened",
+                            "  Three rejects in a row — risk incident opened.",
+                            "  Trading will auto-stop in 2 hours if you do not acknowledge.",
+                            "",
+                            f"Latest: {symbol} {intent.side}",
+                        ]
+                    ),
+                    config.alerts,
+                )
             if raw["orders_today"] > 6:
                 risk.trigger("max_orders", now_utc)
-                _safe_notify("risk_alert", "Max orders for the day exceeded.", config.alerts)
+                _safe_notify(
+                    "risk_alert",
+                    "\n".join(
+                        [
+                            "Daily order cap hit",
+                            "",
+                            "What happened",
+                            f"  Orders today: {raw['orders_today']} (cap is 6).",
+                            "  Risk incident opened — ack within 2 hours or trading auto-stops.",
+                        ]
+                    ),
+                    config.alerts,
+                )
             if result.status == "filled":
-                _safe_notify("fill", f"{symbol} filled {intent.quantity}", config.alerts)
+                qty = intent.quantity
+                qty_txt = f"{qty:g}" if float(qty) == int(qty) else f"{qty:.4f}"
+                _safe_notify(
+                    "fill",
+                    "\n".join(
+                        [
+                            f"{intent.side} {symbol} filled — {qty_txt} share(s)",
+                            "",
+                            "Details",
+                            f"  Symbol:   {symbol}",
+                            f"  Side:     {intent.side}",
+                            f"  Quantity: {qty_txt}",
+                            f"  Mode:     {config.mode.value}",
+                            f"  Price ~   {price:.2f}",
+                        ]
+                    ),
+                    config.alerts,
+                )
             elif result.status == "rejected":
-                _safe_notify("reject", f"{symbol} rejected", config.alerts)
+                _safe_notify(
+                    "reject",
+                    "\n".join(
+                        [
+                            f"{intent.side} {symbol} was rejected",
+                            "",
+                            "What this means",
+                            "  The broker did not accept the order.",
+                            "  No shares changed for this attempt.",
+                            "",
+                            "Details",
+                            f"  Symbol:   {symbol}",
+                            f"  Side:     {intent.side}",
+                            f"  Quantity: {intent.quantity}",
+                            f"  Mode:     {config.mode.value}",
+                            f"  Price ~   {price:.2f}",
+                        ]
+                    ),
+                    config.alerts,
+                )
             filled = result.status == "filled"
             snapshot = broker.get_account_snapshot()
         saved = probe if (signal is None or filled) else before
@@ -385,10 +485,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ibkr_connect_failed: {exc}", file=sys.stderr)
             _safe_notify(
                 "disconnect",
-                f"IBKR connect failed on port {port}: {exc}\n"
-                f"(Further disconnect emails suppressed for ~6h until reconnect.)\n"
-                f"If AutoRestart failed: update paper login with ~/set_ib_paper_login.sh "
-                f"then: sudo systemctl restart ibgateway.service",
+                "\n".join(
+                    [
+                        "IBKR Gateway connection failed",
+                        "",
+                        "What this means",
+                        "  The live worker could not log in to IBKR this cycle.",
+                        "  No orders will be placed until the connection recovers.",
+                        "  Repeat disconnect emails are suppressed for ~6 hours.",
+                        "",
+                        "Details",
+                        f"  Port:  {port}",
+                        f"  Error: {exc}",
+                        "",
+                        "If AutoRestart failed",
+                        "  1. Update paper login: ~/set_ib_paper_login.sh",
+                        "  2. Restart gateway: sudo systemctl restart ibgateway.service",
+                    ]
+                ),
                 config.alerts,
             )
             _write_last_cycle(

@@ -463,17 +463,25 @@ def run_once(version: str = "v1", project_root: Path | None = None) -> None:
             changed_any = True
             if bool(config.get("alerts_enabled", False)):
                 send_signal_email(
-                    subject=f"[ALERT] {action} {symbol} @ {latest_price:.2f}",
-                    body=(
-                        f"Signal: {action}\n"
-                        f"Symbol: {symbol}\n"
-                        f"Time: {latest_dt.isoformat()}\n"
-                        f"Price: {latest_price:.4f}\n"
-                        f"Shares after: {strategy_state.shares:.8f}\n"
-                        f"Cash after: {strategy_state.cash:.2f}\n"
-                        f"Portfolio value: {port_val:.2f}\n"
-                        f"Thresholds: buy_rise={buy_rise*100:.3f}% sell_drop={sell_drop*100:.3f}%\n"
-                        f"Reoptimized this run: {reoptimized}"
+                    subject=f"[PAPER] {action} {symbol} @ ${latest_price:.2f}",
+                    body="\n".join(
+                        [
+                            f"{action} signal on {symbol}",
+                            "",
+                            "Details",
+                            f"  Symbol:          {symbol}",
+                            f"  Action:          {action}",
+                            f"  Price:           ${latest_price:.2f}",
+                            f"  Shares after:    {strategy_state.shares:.4f}",
+                            f"  Cash after:      ${strategy_state.cash:.2f}",
+                            f"  Portfolio value: ${port_val:.2f}",
+                            f"  Buy trigger:     +{buy_rise * 100:.2f}% off trough",
+                            f"  Sell trigger:    −{sell_drop * 100:.2f}% off peak",
+                            f"  Reoptimized:     {'yes' if reoptimized else 'no'}",
+                            f"  Bar time:        {latest_dt.isoformat()}",
+                            "",
+                            f"Reason: {reason}",
+                        ]
                     ),
                 )
 

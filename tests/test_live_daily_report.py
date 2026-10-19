@@ -21,4 +21,4 @@ def test_daily_summary_from_equity(tmp_path) -> None:
     )
     body = build_summary(paths)
     assert "MSFT" in body
-    assert "bot return" in body
+    assert "Bot return" in body

@@ -21,7 +21,7 @@ def test_fill_subject(monkeypatch) -> None:
 
     monkeypatch.setattr("app.notifier.send_signal_email", fake_send)
     assert notify_fill("AAPL 1 share") is True
-    assert "FILL" in seen["subject"]
+    assert "filled" in seen["subject"].lower()
 
 
 def test_flag_can_disable_fill(monkeypatch) -> None:
@@ -89,7 +89,7 @@ def test_send_signal_email_body_gets_eastern_stamp(monkeypatch) -> None:
 
     monkeypatch.setattr("app.notifier.smtplib.SMTP", _FakeSMTP)
     assert send_signal_email("Hello", "There") is True
-    assert captured["body"].startswith("Time:")
+    assert captured["body"].startswith("There")
+    assert "Sent:" in captured["body"]
     assert "EST" in captured["body"] or "EDT" in captured["body"]
-    assert "There" in captured["body"]
-    assert "Z" not in captured["body"].split("\n", 1)[0]
+    assert "Z" not in captured["body"].split("Sent:", 1)[-1]

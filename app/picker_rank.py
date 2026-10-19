@@ -19,7 +19,7 @@ from app.paths import PickerPaths, ROOT
 from app.picker.active import load_active
 from app.picker.ibkr_bars import IbkrHourlyBarProvider
 from app.picker.run import run_ranking
-from app.picker.sp500 import load_sp500
+from app.picker.sp500 import load_sp500_constituents, profiles_by_symbol
 
 ET = ZoneInfo("America/New_York")
 WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
@@ -135,8 +135,11 @@ def main(argv: list[str] | None = None) -> int:
         provider = IbkrHourlyBarProvider(broker)
         print(f"bar_provider=ibkr port={port} client_id={client_id}")
 
+    constituents = load_sp500_constituents(picker_paths.sp500_cache_path, _wiki_fetcher)
+    profiles = profiles_by_symbol(constituents)
+
     def sp500_loader() -> list[str]:
-        return load_sp500(picker_paths.sp500_cache_path, _wiki_fetcher)
+        return [c.symbol for c in constituents]
 
     result = run_ranking(
         as_of=as_of,
@@ -146,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         active_symbols=active_symbols,
         send_email=not args.no_email,
         dry_run=args.dry_run,
+        profiles=profiles,
     )
     print(f"ok={result.ok} aborted={result.aborted} dry_run={result.dry_run}")
     print(f"run_id={result.run_id} pending_written={result.pending_written}")

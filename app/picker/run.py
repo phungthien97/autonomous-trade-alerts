@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from app.paths import PickerPaths
@@ -13,11 +13,13 @@ from app.picker.bars import HourlyBarProvider, fetch_universe_bars
 from app.picker.notify import (
     build_failure_email_body,
     build_success_email_body,
+    build_success_email_subject,
     send_picker_email,
 )
 from app.picker.pending import PendingSelection, PendingSymbol, save_pending
 from app.picker.rank import SelectedSymbol, select_symbols
 from app.picker.rank_symbol import rank_one_symbol
+from app.picker.sp500 import Sp500Constituent
 from app.picker.windows import ranking_windows
 
 ET = ZoneInfo("America/New_York")
@@ -67,6 +69,24 @@ def _write_report(picker_paths: PickerPaths, run_id: str, payload: dict) -> str:
     return str(path)
 
 
+def _enrich_selected(
+    selected: Sequence[SelectedSymbol],
+    profiles: Mapping[str, Sp500Constituent] | None,
+) -> list[dict]:
+    rows: list[dict] = []
+    for s in selected:
+        row = asdict(s)
+        info = profiles.get(s.symbol) if profiles else None
+        if info is not None:
+            row["name"] = info.name
+            row["sector"] = info.sector
+        else:
+            row["name"] = ""
+            row["sector"] = ""
+        rows.append(row)
+    return rows
+
+
 def run_ranking(
     as_of: date | datetime,
     sp500_loader: Callable[[], list[str]],
@@ -77,6 +97,7 @@ def run_ranking(
     send_email: bool = False,
     dry_run: bool = False,
     initial_cash: float = 1000.0,
+    profiles: Mapping[str, Sp500Constituent] | None = None,
 ) -> RankingRunResult:
     """Score S&P names and write pending selection (unless dry_run / abort)."""
     as_of_d = _as_of_date(as_of)
@@ -137,6 +158,7 @@ def run_ranking(
         ranked_rows.append(row)
 
     selected = select_symbols(ranked_rows, max_n=5)
+    selected_rows = _enrich_selected(selected, profiles)
     body = build_success_email_body(
         run_id=run_id,
         as_of=as_of_d.isoformat(),
@@ -148,12 +170,9 @@ def run_ranking(
         failure_pct=fetched.failure_pct,
         apply_after=apply_after.isoformat(),
         dry_run=dry_run,
+        profiles=profiles,
     )
-    subject = (
-        "[PICKER][DRY RUN] ranking summary"
-        if dry_run
-        else "[PICKER] ranking summary"
-    )
+    subject = build_success_email_subject(selected, dry_run=dry_run)
     report = {
         "run_id": run_id,
         "as_of": as_of_d.isoformat(),
@@ -165,7 +184,7 @@ def run_ranking(
         "failure_pct": fetched.failure_pct,
         "skipped": [{"symbol": s, "reason": r} for s, r in fetched.skipped],
         "ranked": ranked_rows,
-        "selected": [asdict(s) for s in selected],
+        "selected": selected_rows,
     }
     report_path = _write_report(picker_paths, run_id, report)
 
@@ -183,8 +202,10 @@ def run_ranking(
                     edge=s.edge,
                     strategy_return=s.strategy_return,
                     bh_return=s.bh_return,
+                    name=str(row.get("name") or ""),
+                    sector=str(row.get("sector") or ""),
                 )
-                for s in selected
+                for s, row in zip(selected, selected_rows, strict=True)
             ],
             status="pending",
             notes="weekend ranking",

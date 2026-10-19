@@ -115,18 +115,20 @@ def build_weekly_report(
     exp_start_et = format_display(_parse_utc(str(experiment_start))) if experiment_start else "not set"
     lines = [
         "Weekly Trading Bot Summary",
-        f"Period: {format_display(period_start.astimezone(DISPLAY_TZ))} to {format_display(now_et)}",
-        f"Experiment start (ET): {exp_start_et}",
         "",
-        "Portfolio return since experiment start:",
+        "Period",
+        f"  {format_display(period_start.astimezone(DISPLAY_TZ))} → {format_display(now_et)}",
+        f"  Experiment start (ET): {exp_start_et}",
+        "",
+        "Portfolio return since experiment start",
         f"  V1: {v1_since:+.2f}%",
         f"  V2: {v2_since:+.2f}%",
         "",
-        "Trades this week:",
+        "Trades this week",
         f"  V1: {len(v1_trades_week)}",
         f"  V2: {len(v2_trades_week)}",
         "",
-        "V2 re-optimizations this week:",
+        "V2 re-optimizations this week",
     ]
     if v2_params_week.empty:
         lines.append("  (none)")

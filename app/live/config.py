@@ -36,6 +36,8 @@ class LiveConfig:
         "risk_alert": True,
         "trading_stopped": True,
         "weekly_2fa": True,
+        "picker_applied": True,
+        "picker_stale": True,
     })
 
     def __post_init__(self) -> None:

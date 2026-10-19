@@ -325,8 +325,28 @@ def render_picker_tab(st: Any, project_root: Path | None = None) -> None:
             f"{'dry-run' if latest.get('dry_run') else 'live write'} · "
             f"{'aborted' if latest.get('aborted') else 'ok'}"
         )
-        selected = latest.get("selected") or []
-        st.write(", ".join(selected) if selected else "(none selected)")
+        selected_rows = latest.get("selected_rows") or []
+        if selected_rows:
+            st.dataframe(
+                _slim_rows(
+                    [
+                        {
+                            "symbol": r.get("symbol"),
+                            "name": r.get("name") or "",
+                            "sector": r.get("sector") or "",
+                            "strategy": r.get("strategy_return"),
+                            "edge": r.get("edge"),
+                        }
+                        for r in selected_rows
+                    ],
+                    ["symbol", "name", "sector", "strategy", "edge"],
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            selected = latest.get("selected") or []
+            st.write(", ".join(selected) if selected else "(none selected)")
 
     st.subheader("Active")
     active = status.get("active") or []
@@ -358,7 +378,27 @@ def render_picker_tab(st: Any, project_root: Path | None = None) -> None:
 
     st.subheader("Pending")
     if status.get("pending_present"):
-        st.write(", ".join(status.get("pending_symbols") or []) or "(empty list)")
+        pending_rows = status.get("pending_rows") or []
+        if pending_rows:
+            st.dataframe(
+                _slim_rows(
+                    [
+                        {
+                            "symbol": r.get("symbol"),
+                            "name": r.get("name") or "",
+                            "sector": r.get("sector") or "",
+                            "strategy": r.get("strategy_return"),
+                            "edge": r.get("edge"),
+                        }
+                        for r in pending_rows
+                    ],
+                    ["symbol", "name", "sector", "strategy", "edge"],
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.write(", ".join(status.get("pending_symbols") or []) or "(empty list)")
         st.caption(f"apply after {status.get('pending_apply_after')}")
     else:
         st.caption("None (dry-run does not write pending).")

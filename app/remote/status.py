@@ -117,18 +117,34 @@ def _latest_ranking_meta(runs_dir: Path) -> dict[str, Any] | None:
     raw = _read_json(newest) or {}
     selected = raw.get("selected") or raw.get("symbols") or []
     names: list[str] = []
+    selected_rows: list[dict[str, Any]] = []
     if isinstance(selected, list):
         for item in selected:
             if isinstance(item, str):
                 names.append(item)
+                selected_rows.append({"symbol": item})
             elif isinstance(item, dict) and item.get("symbol"):
-                names.append(str(item["symbol"]))
+                sym = str(item["symbol"])
+                names.append(sym)
+                selected_rows.append(
+                    {
+                        "symbol": sym,
+                        "name": str(item.get("name") or ""),
+                        "sector": str(item.get("sector") or ""),
+                        "edge": item.get("edge"),
+                        "strategy_return": item.get("strategy_return"),
+                        "bh_return": item.get("bh_return"),
+                        "buy_rise": item.get("buy_rise"),
+                        "sell_drop": item.get("sell_drop"),
+                    }
+                )
     return {
         "run_id": str(raw.get("run_id") or newest.stem),
         "path": str(newest.name),
         "aborted": bool(raw.get("aborted", False)),
         "dry_run": bool(raw.get("dry_run", False)),
         "selected": names,
+        "selected_rows": selected_rows,
         "ok": raw.get("ok"),
     }
 
@@ -153,22 +169,64 @@ def load_picker_status(state_picker_dir: Path) -> dict[str, Any]:
                 }
             )
     pending_symbols: list[str] = []
+    pending_rows: list[dict[str, Any]] = []
     apply_after = None
     if pending:
         apply_after = pending.get("apply_after")
         for row in pending.get("symbols") or []:
             if isinstance(row, dict) and row.get("symbol"):
-                pending_symbols.append(str(row["symbol"]))
+                sym = str(row["symbol"])
+                pending_symbols.append(sym)
+                pending_rows.append(
+                    {
+                        "symbol": sym,
+                        "name": str(row.get("name") or ""),
+                        "sector": str(row.get("sector") or ""),
+                        "edge": row.get("edge"),
+                        "strategy_return": row.get("strategy_return"),
+                        "bh_return": row.get("bh_return"),
+                        "buy_rise": row.get("buy_rise"),
+                        "sell_drop": row.get("sell_drop"),
+                    }
+                )
             elif isinstance(row, str):
                 pending_symbols.append(row)
+                pending_rows.append({"symbol": row})
+    latest = _latest_ranking_meta(root / "ranking_runs")
+    # Backfill name/sector from S&P cache when older pending/report rows omit them.
+    try:
+        from app.picker.sp500 import load_sp500_profiles
+
+        profiles = load_sp500_profiles(root / "sp500_cache.json")
+    except Exception:  # noqa: BLE001
+        profiles = {}
+    if profiles:
+        for row in pending_rows:
+            info = profiles.get(str(row.get("symbol", "")))
+            if info is None:
+                continue
+            if not row.get("name") and info.name:
+                row["name"] = info.name
+            if not row.get("sector") and info.sector:
+                row["sector"] = info.sector
+        if latest:
+            for row in latest.get("selected_rows") or []:
+                info = profiles.get(str(row.get("symbol", "")))
+                if info is None:
+                    continue
+                if not row.get("name") and info.name:
+                    row["name"] = info.name
+                if not row.get("sector") and info.sector:
+                    row["sector"] = info.sector
     return {
         "active": active_symbols,
         "active_run_id": (active or {}).get("run_id") if active else None,
         "active_applied_at": (active or {}).get("applied_at") if active else None,
         "pending_present": pending is not None,
         "pending_symbols": pending_symbols,
+        "pending_rows": pending_rows,
         "pending_apply_after": apply_after,
-        "latest_run": _latest_ranking_meta(root / "ranking_runs"),
+        "latest_run": latest,
     }
 
 

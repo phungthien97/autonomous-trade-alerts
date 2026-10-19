@@ -35,10 +35,16 @@ def build_summary(paths: LivePaths | None = None) -> str:
     metrics = returns_from_values(start, bot_end, bot_end)
     lines = [
         "Live daily summary",
-        f"symbols: {', '.join(symbols)}",
-        f"bot return: {metrics['bot_return_pct']:.2f}%",
-        f"equal-weight B&H proxy return: {metrics['bh_return_pct']:.2f}%",
-        f"edge: {metrics['edge_pct']:.2f}%",
+        "",
+        "Book",
+        f"  Sleeves:  {', '.join(symbols) if symbols else '(none)'}",
+        f"  Start $:  {start:,.0f}",
+        f"  End $:    {bot_end:,.2f}",
+        "",
+        "Performance",
+        f"  Bot return:     {metrics['bot_return_pct']:+.2f}%",
+        f"  Equal-weight B&H (proxy): {metrics['bh_return_pct']:+.2f}%",
+        f"  Edge vs B&H:    {metrics['edge_pct']:+.2f}%",
     ]
     return "\n".join(lines)
 

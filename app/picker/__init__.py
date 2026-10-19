@@ -37,7 +37,16 @@ from app.picker.rank_symbol import SymbolRankResult, rank_one_symbol
 from app.picker.score import SymbolScore, score_symbol_series
 from app.picker.sizing import sleeve_buy_budget
 from app.picker.soft_rotate import SoftRotateFlags, SoftRotatePlan, plan_soft_rotate
-from app.picker.sp500 import Sp500LoadError, load_sp500, parse_sp500_html
+from app.picker.sp500 import (
+    Sp500Constituent,
+    Sp500LoadError,
+    load_sp500,
+    load_sp500_constituents,
+    load_sp500_profiles,
+    parse_sp500_constituents,
+    parse_sp500_html,
+    profiles_by_symbol,
+)
 from app.picker.tickers import normalize_list, normalize_wikipedia_ticker
 from app.picker.trend_gate import allow_first_buy, sma
 from app.picker.windows import (
@@ -65,6 +74,7 @@ __all__ = [
     "SkipSymbol",
     "SoftRotateFlags",
     "SoftRotatePlan",
+    "Sp500Constituent",
     "Sp500LoadError",
     "SymbolRankResult",
     "SymbolScore",
@@ -84,13 +94,17 @@ __all__ = [
     "load_active",
     "load_pending",
     "load_sp500",
+    "load_sp500_constituents",
+    "load_sp500_profiles",
     "mark_aborted",
     "mark_applied",
     "maybe_apply_pending",
     "normalize_list",
     "normalize_wikipedia_ticker",
+    "parse_sp500_constituents",
     "parse_sp500_html",
     "plan_soft_rotate",
+    "profiles_by_symbol",
     "rank_one_symbol",
     "ranking_windows",
     "run_ranking",

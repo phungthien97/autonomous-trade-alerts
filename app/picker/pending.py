@@ -18,6 +18,8 @@ class PendingSymbol:
     edge: float
     strategy_return: float
     bh_return: float | None = None
+    name: str = ""
+    sector: str = ""
 
 
 @dataclass
@@ -49,6 +51,8 @@ class PendingSelection:
                 edge=float(row["edge"]),
                 strategy_return=float(row["strategy_return"]),
                 bh_return=None if row.get("bh_return") is None else float(row["bh_return"]),
+                name=str(row.get("name") or "").strip(),
+                sector=str(row.get("sector") or "").strip(),
             )
             for row in raw.get("symbols", [])
         ]
