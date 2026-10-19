@@ -34,7 +34,7 @@
     {
       "symbol": "AMD",
       "buy_rise_pct": 3.5,
-      "sell_drop_pct": 8.0,
+      "sell_drop_pct": 7.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true,
@@ -63,8 +63,8 @@
     },
     {
       "symbol": "NVDA",
-      "buy_rise_pct": 3.0,
-      "sell_drop_pct": 4.0,
+      "buy_rise_pct": 2.5,
+      "sell_drop_pct": 7.0,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true,
