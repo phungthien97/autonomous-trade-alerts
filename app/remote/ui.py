@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.live.control import ack_risk, disable_trading, enable_trading
 from app.paths import LivePaths, PickerPaths, ROOT
@@ -12,6 +14,8 @@ from app.remote.health import build_health_strip
 from app.remote.marks import dashboard_ib_client_id, overlay_ibkr_marks
 from app.remote.money import cash_and_invested, live_money_snapshot, position_rows
 from app.remote.status import load_live_status, load_paper_status, load_picker_status
+
+_ET = ZoneInfo("America/New_York")
 
 
 def _gateway_health_log() -> Path | None:
@@ -67,6 +71,62 @@ def _fmt_pct(value: Any, *, signed: bool = True) -> str:
     if signed:
         return f"{num:+.2f}%"
     return f"{num:.1f}%"
+
+
+def _fmt_frac_pct(value: Any, *, digits: int = 1) -> str:
+    """Format a unit fraction (0.289 → +28.9%)."""
+    if value is None or value == "":
+        return "—"
+    try:
+        return f"{float(value) * 100.0:+.{digits}f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmt_trigger_pct(value: Any) -> str:
+    if value is None or value == "":
+        return "—"
+    try:
+        return f"{float(value) * 100.0:.1f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmt_eastern(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    try:
+        raw = str(iso).replace("Z", "+00:00")
+        moment = datetime.fromisoformat(raw)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=ZoneInfo("UTC"))
+        local = moment.astimezone(_ET)
+        return local.strftime("%a %b %d · %I:%M %p %Z").replace(" 0", " ")
+    except ValueError:
+        return str(iso)
+
+
+def _picker_sleeve_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Human-readable sleeve rows for the Picker tab."""
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(rows, start=1):
+        out.append(
+            {
+                "#": i,
+                "Symbol": row.get("symbol") or "—",
+                "Company": row.get("name") or "—",
+                "Sector": row.get("sector") or "—",
+                "Strategy profit": _fmt_frac_pct(row.get("strategy_return")),
+                "Beat B&H by": _fmt_frac_pct(row.get("edge")),
+                "Buy trigger": f"+{_fmt_trigger_pct(row.get('buy_rise'))} off trough"
+                if row.get("buy_rise") is not None
+                else "—",
+                "Sell trigger": f"−{_fmt_trigger_pct(row.get('sell_drop'))} off peak"
+                if row.get("sell_drop") is not None
+                else "—",
+            }
+        )
+    return out
 
 
 def _slim_rows(rows: list[dict[str, Any]], columns: list[str]) -> list[dict[str, Any]]:
@@ -313,92 +373,93 @@ def render_paper_tab(st: Any, version: str, project_root: Path | None = None) ->
 def render_picker_tab(st: Any, project_root: Path | None = None) -> None:
     root = project_root or ROOT
     picker_paths = PickerPaths(project_root=root)
-    if st.button("Refresh", type="primary", key="remote_picker_refresh"):
-        st.rerun()
-    status = load_picker_status(picker_paths.state_dir)
-
-    latest = status.get("latest_run")
-    if latest:
-        st.subheader("Latest rank")
-        st.write(
-            f"**{latest.get('run_id')}** · "
-            f"{'dry-run' if latest.get('dry_run') else 'live write'} · "
-            f"{'aborted' if latest.get('aborted') else 'ok'}"
+    top_l, top_r = st.columns([4, 1])
+    with top_l:
+        st.caption(
+            "S&P ranking · keep names that beat buy-&-hold and made money · "
+            "rank by strategy profit"
         )
-        selected_rows = latest.get("selected_rows") or []
-        if selected_rows:
-            st.dataframe(
-                _slim_rows(
-                    [
-                        {
-                            "symbol": r.get("symbol"),
-                            "name": r.get("name") or "",
-                            "sector": r.get("sector") or "",
-                            "strategy": r.get("strategy_return"),
-                            "edge": r.get("edge"),
-                        }
-                        for r in selected_rows
-                    ],
-                    ["symbol", "name", "sector", "strategy", "edge"],
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-        else:
-            selected = latest.get("selected") or []
-            st.write(", ".join(selected) if selected else "(none selected)")
+    with top_r:
+        if st.button("Refresh", type="secondary", key="remote_picker_refresh"):
+            st.rerun()
 
-    st.subheader("Active")
+    status = load_picker_status(picker_paths.state_dir)
+    latest = status.get("latest_run") or {}
+    pending_rows = list(status.get("pending_rows") or [])
+    apply_label = _fmt_eastern(status.get("pending_apply_after"))
+
+    # --- Queued for Monday (primary) ---
+    st.subheader("Queued for Monday")
+    if status.get("pending_present") and pending_rows:
+        st.success(f"Applies **{apply_label}** · first live-worker cycle after the open")
+        st.dataframe(
+            _picker_sleeve_table(pending_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "Strategy profit = after-fee return on the score window. "
+            "Beat B&H = how much better than buy-and-hold. "
+            "No action needed unless you want to cancel before apply."
+        )
+    elif status.get("pending_present"):
+        syms = status.get("pending_symbols") or []
+        st.success(f"Applies **{apply_label}**")
+        st.write(", ".join(syms) if syms else "(empty — all cash)")
+    else:
+        st.info("Nothing queued. Weekend ranking will write pending when it next runs.")
+
+    # --- Live sleeves (what the bot trades now) ---
+    st.subheader("Live sleeves now")
     active = status.get("active") or []
     if active:
-        st.caption(f"run {status.get('active_run_id')} · applied {status.get('active_applied_at')}")
-        st.caption("These sleeves drive Live buy/sell distances.")
+        st.caption(
+            f"Run `{status.get('active_run_id')}` · applied "
+            f"{_fmt_eastern(status.get('active_applied_at'))}"
+        )
         st.dataframe(
-            _slim_rows(
-                [
-                    {
-                        "symbol": a.get("symbol"),
-                        "buy_rise": a.get("buy_rise"),
-                        "sell_drop": a.get("sell_drop"),
-                        "flag": (
-                            "exit only"
-                            if a.get("exit_only")
-                            else ("awaiting buy" if a.get("awaiting_first_buy") else "active")
-                        ),
-                    }
-                    for a in active
-                ],
-                ["symbol", "buy_rise", "sell_drop", "flag"],
-            ),
+            [
+                {
+                    "Symbol": a.get("symbol") or "—",
+                    "Buy trigger": f"+{_fmt_trigger_pct(a.get('buy_rise'))} off trough"
+                    if a.get("buy_rise") is not None
+                    else "—",
+                    "Sell trigger": f"−{_fmt_trigger_pct(a.get('sell_drop'))} off peak"
+                    if a.get("sell_drop") is not None
+                    else "—",
+                    "Status": (
+                        "Exit only"
+                        if a.get("exit_only")
+                        else ("Awaiting first buy" if a.get("awaiting_first_buy") else "Active")
+                    ),
+                }
+                for a in active
+            ],
             use_container_width=True,
             hide_index=True,
         )
     else:
-        st.info("No active selection yet (waiting for Monday apply).")
+        st.info("No active sleeves yet — waiting for the first Monday apply.")
 
-    st.subheader("Pending")
-    if status.get("pending_present"):
-        pending_rows = status.get("pending_rows") or []
-        if pending_rows:
+    # --- Last ranking run (meta only; avoid duplicating the pending table) ---
+    st.subheader("Last ranking run")
+    if latest:
+        mode = "dry run" if latest.get("dry_run") else "live write"
+        outcome = "aborted" if latest.get("aborted") else "ok"
+        st.write(f"**{latest.get('run_id')}** · {mode} · {outcome}")
+        latest_syms = [str(s) for s in (latest.get("selected") or [])]
+        pending_syms = [str(r.get("symbol")) for r in pending_rows if r.get("symbol")]
+        if latest_syms and latest_syms != pending_syms:
+            # Only show a second table when it differs from pending.
+            rows = latest.get("selected_rows") or [{"symbol": s} for s in latest_syms]
             st.dataframe(
-                _slim_rows(
-                    [
-                        {
-                            "symbol": r.get("symbol"),
-                            "name": r.get("name") or "",
-                            "sector": r.get("sector") or "",
-                            "strategy": r.get("strategy_return"),
-                            "edge": r.get("edge"),
-                        }
-                        for r in pending_rows
-                    ],
-                    ["symbol", "name", "sector", "strategy", "edge"],
-                ),
+                _picker_sleeve_table(rows),
                 use_container_width=True,
                 hide_index=True,
             )
+        elif latest_syms:
+            st.caption("Same sleeve list as queued above.")
         else:
-            st.write(", ".join(status.get("pending_symbols") or []) or "(empty list)")
-        st.caption(f"apply after {status.get('pending_apply_after')}")
+            st.caption("No symbols selected in that run.")
     else:
-        st.caption("None (dry-run does not write pending).")
+        st.caption("No ranking reports on disk yet.")
