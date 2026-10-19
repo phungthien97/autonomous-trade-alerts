@@ -108,23 +108,31 @@ def _fmt_eastern(iso: str | None) -> str:
 
 def _tab_chrome(st: Any, caption: str, *, refresh_key: str) -> bool:
     """Shared caption + secondary Refresh row used by every tab."""
-    top_l, top_r = st.columns([4, 1])
-    with top_l:
-        st.caption(caption)
-    with top_r:
-        return bool(st.button("Refresh", type="secondary", key=refresh_key))
+    clicked = False
+    with st.container():
+        top_l, top_r = st.columns([4, 1])
+        with top_l:
+            st.caption(caption)
+        with top_r:
+            clicked = bool(st.button("Refresh", type="secondary", key=refresh_key))
+    return clicked
 
 
 def _show_table(st: Any, rows: list[dict[str, Any]], empty: str) -> None:
-    if rows:
-        # All-string cells avoid Arrow mixed-type blank frames in newer Streamlit.
-        safe = [{k: ("" if v is None else str(v)) for k, v in row.items()} for row in rows]
-        try:
-            st.dataframe(safe, width="stretch", hide_index=True)
-        except TypeError:
-            st.dataframe(safe, use_container_width=True, hide_index=True)
-    else:
+    if not rows:
         st.info(empty)
+        return
+    # All-string cells + explicit column order keep Arrow/Streamlit from
+    # collapsing to a single narrow Symbol column on some hosts.
+    cols = list(rows[0].keys())
+    safe = [{k: ("" if row.get(k) is None else str(row.get(k))) for k in cols} for row in rows]
+    try:
+        import pandas as pd
+
+        frame = pd.DataFrame(safe, columns=cols)
+        st.dataframe(frame, use_container_width=True, hide_index=True)
+    except Exception:  # noqa: BLE001
+        st.dataframe(safe, use_container_width=True, hide_index=True)
 
 
 def _fmt_shares(value: Any) -> str:
