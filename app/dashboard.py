@@ -26,15 +26,17 @@ def _inject_styles() -> None:
     st.markdown(
         """
         <style>
-        .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 920px; }
+        .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 960px; }
         h1 { font-size: 1.6rem !important; margin-bottom: 0.25rem !important; }
+        /* Shared section rhythm across Live / Paper / Picker */
+        h3 { font-size: 1.05rem !important; margin-top: 0.85rem !important; margin-bottom: 0.35rem !important; }
         div[data-testid="stMetricValue"] { font-size: 1.15rem; }
-        /* Emphasize first money metric (NAV) on Live / Paper */
         div[data-testid="stHorizontalBlock"] > div:first-child div[data-testid="stMetricValue"] {
             font-size: 1.45rem;
         }
-        /* Hide dataframe chrome (search/download/fullscreen) on phone */
         div[data-testid="stElementToolbar"] { display: none !important; }
+        /* Softer secondary Refresh so it matches every tab */
+        div[data-testid="stTabs"] button[kind="secondary"] { border-radius: 0.4rem; }
         </style>
         """,
         unsafe_allow_html=True,

@@ -106,6 +106,56 @@ def _fmt_eastern(iso: str | None) -> str:
         return str(iso)
 
 
+def _tab_chrome(st: Any, caption: str, *, refresh_key: str) -> bool:
+    """Shared caption + secondary Refresh row used by every tab."""
+    top_l, top_r = st.columns([4, 1])
+    with top_l:
+        st.caption(caption)
+    with top_r:
+        return bool(st.button("Refresh", type="secondary", key=refresh_key))
+
+
+def _show_table(st: Any, rows: list[dict[str, Any]], empty: str) -> None:
+    if rows:
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    else:
+        st.info(empty)
+
+
+def _holdings_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Title-case holdings rows shared by Live + Paper."""
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        shares = row.get("shares")
+        try:
+            share_digits = 4 if float(shares or 0) % 1 else 2
+        except (TypeError, ValueError):
+            share_digits = 2
+        item: dict[str, Any] = {
+            "Symbol": row.get("symbol") or "—",
+            "Shares": _fmt_num(shares, share_digits),
+            "Price": _fmt_money(row.get("price")),
+            "Value": _fmt_money(row.get("value")),
+            "Weight": _fmt_pct(row.get("weight_pct"), signed=False)
+            if row.get("weight_pct") is not None
+            else "—",
+        }
+        if row.get("to_sell_pct") is not None:
+            item["To sell"] = _fmt_pct(row.get("to_sell_pct"))
+        if row.get("to_buy_pct") is not None:
+            item["To buy"] = _fmt_pct(row.get("to_buy_pct"))
+        if row.get("flag"):
+            item["Status"] = row.get("flag")
+        if row.get("last_action"):
+            item["Last action"] = row.get("last_action")
+        out.append(item)
+    # Drop columns that are entirely empty/dash across rows
+    if not out:
+        return out
+    keep = [k for k in out[0] if any(r.get(k) not in (None, "", "—") for r in out)]
+    return [{k: r.get(k, "—") for k in keep} for r in out]
+
+
 def _picker_sleeve_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Human-readable sleeve rows for the Picker tab."""
     out: list[dict[str, Any]] = []
@@ -126,45 +176,6 @@ def _picker_sleeve_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 else "—",
             }
         )
-    return out
-
-
-def _slim_rows(rows: list[dict[str, Any]], columns: list[str]) -> list[dict[str, Any]]:
-    """Keep columns that have at least one real value; format numbers."""
-    if not rows:
-        return []
-    keep: list[str] = []
-    for col in columns:
-        for row in rows:
-            val = row.get(col)
-            if val is None or val == "" or val == "—":
-                continue
-            keep.append(col)
-            break
-    out = []
-    for row in rows:
-        slim: dict[str, Any] = {}
-        for col in keep:
-            val = row.get(col)
-            if col in {"shares"}:
-                slim[col] = _fmt_num(val, 4 if float(val or 0) % 1 else 2)
-            elif col in {"weight_pct", "to_sell_pct", "to_buy_pct"}:
-                slim[col] = _fmt_num(val, 1)
-            elif col in {
-                "last_price",
-                "peak",
-                "trough",
-                "price",
-                "buy_rise",
-                "sell_drop",
-                "value",
-                "mkt_value",
-                "cash",
-            }:
-                slim[col] = _fmt_num(val, 2)
-            else:
-                slim[col] = "—" if val is None else val
-        out.append(slim)
     return out
 
 
@@ -209,11 +220,11 @@ def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -
     if day_delta is not None:
         delta_label = _fmt_money(day_delta)
         if day_pct is not None:
-            c3.metric("Day Δ", delta_label, delta=_fmt_pct(day_pct))
+            c3.metric("Day P&L", delta_label, delta=_fmt_pct(day_pct))
         else:
-            c3.metric("Day Δ", delta_label)
+            c3.metric("Day P&L", delta_label)
     else:
-        c3.metric("Day Δ", "—")
+        c3.metric("Day P&L", "—")
     c4.metric("Cash / invested", f"{_fmt_money(cash)} / {_fmt_money(invested)}")
 
     bits: list[str] = []
@@ -232,7 +243,7 @@ def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -
         if last.get("at_eastern"):
             bits.append(f"cycle {last['at_eastern']}")
         elif last.get("at_utc"):
-            bits.append(f"cycle {last['at_utc']}")
+            bits.append(f"cycle {_fmt_eastern(str(last['at_utc']))}")
         if last.get("price_source"):
             bits.append(str(last["price_source"]))
     if bits:
@@ -256,19 +267,24 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
     live_paths = LivePaths(project_root=root)
     picker_paths = PickerPaths(project_root=root)
 
-    refresh = st.button("Refresh", type="primary", key="remote_live_refresh")
+    refresh = _tab_chrome(
+        st,
+        "IBKR paper / live book · health, money, and safe controls",
+        refresh_key="remote_live_refresh",
+    )
     status = load_live_status(live_paths.state_dir)
     if refresh:
         status = _try_ibkr_marks(status)
     picker = load_picker_status(picker_paths.state_dir)
 
+    st.subheader("Health")
     strip = build_health_strip(
         live_status=status,
         gateway_health_log=_gateway_health_log(),
     )
     render_health_strip(st, strip, marks_source=status.get("marks_source"))
 
-    st.divider()
+    st.subheader("Portfolio")
     money = live_money_snapshot(
         positions=status.get("positions") or [],
         total_cash=status.get("total_cash"),
@@ -278,43 +294,38 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
     )
     _render_money_hero(st, money, status)
     _render_edge_strip(st, money.get("edge") or {}, money.get("bot_return_pct"))
-
-    holdings = _slim_rows(
-        money.get("holdings") or [],
-        ["symbol", "shares", "price", "value", "weight_pct", "to_sell_pct", "to_buy_pct", "flag"],
+    _show_table(
+        st,
+        _holdings_table(money.get("holdings") or []),
+        "Flat — no positions yet.",
     )
-    if holdings:
-        st.dataframe(holdings, use_container_width=True, hide_index=True)
-    else:
-        st.info("Flat — no positions.")
 
     last = status.get("last_cycle") or {}
     decisions = last.get("decisions") if isinstance(last, dict) else None
+    st.subheader("Last cycle")
     if isinstance(decisions, list) and decisions:
-        st.subheader("Last cycle")
         rows = []
         for d in decisions:
             if not isinstance(d, dict):
                 continue
             reason = d.get("signal_reason") or ""
-            if isinstance(reason, str) and len(reason) > 48:
-                reason = reason[:45] + "…"
+            if isinstance(reason, str) and len(reason) > 64:
+                reason = reason[:61] + "…"
             rows.append(
                 {
-                    "symbol": d.get("symbol"),
-                    "signal": d.get("signal") or "—",
-                    "plan": d.get("plan") or "—",
-                    "action": d.get("action") or "—",
-                    "reason": reason or None,
+                    "Symbol": d.get("symbol") or "—",
+                    "Signal": d.get("signal") or "—",
+                    "Plan": d.get("plan") or "—",
+                    "Action": d.get("action") or "—",
+                    "Reason": reason or "—",
                 }
             )
-        st.dataframe(
-            _slim_rows(rows, ["symbol", "signal", "plan", "action", "reason"]),
-            use_container_width=True,
-            hide_index=True,
-        )
+        _show_table(st, rows, "No decisions this cycle.")
+    else:
+        st.caption("No cycle decisions recorded yet.")
 
-    st.divider()
+    st.subheader("Controls")
+    st.caption("Safe ops only — disable / enable trading and acknowledge risk incidents.")
     b1, b2, b3 = st.columns(3)
     if b1.button("Disable trading", use_container_width=True, key="remote_disable"):
         disable_trading(live_paths)
@@ -329,12 +340,16 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
 
 def render_paper_tab(st: Any, version: str, project_root: Path | None = None) -> None:
     root = project_root or ROOT
+    label = "V1" if version == "v1" else "V2"
     state_dir = root / ("state" if version == "v1" else "state_v2")
-    if st.button("Refresh", type="primary", key=f"remote_paper_refresh_{version}"):
-        st.rerun()
+    _tab_chrome(
+        st,
+        f"Paper {label} · file-sim experiment (not IBKR paper)",
+        refresh_key=f"remote_paper_refresh_{version}",
+    )
     status = load_paper_status(state_dir)
     if not status["exists"]:
-        st.warning(f"No {state_dir.name}/ on this host.")
+        st.warning(f"No `{state_dir.name}/` on this host yet.")
         return
 
     positions = status.get("positions") or []
@@ -342,61 +357,39 @@ def render_paper_tab(st: Any, version: str, project_root: Path | None = None) ->
     cash, invested = cash_and_invested(positions)
     nav = float(pv) if isinstance(pv, (int, float)) else (cash + invested)
 
+    st.subheader("Portfolio")
     c1, c2, c3 = st.columns(3)
     c1.metric("NAV", _fmt_money(nav))
     c2.metric("Cash", _fmt_money(cash))
     c3.metric("Invested", _fmt_money(invested))
-    st.caption("file-sim paper (not IBKR paper)")
     if status.get("last_run_at"):
-        st.caption(f"Last worker run: {status['last_run_at']}")
+        st.caption(f"Last worker run · {_fmt_eastern(str(status['last_run_at']))}")
+    else:
+        st.caption("Last worker run · —")
 
     holdings = position_rows(positions, nav=nav)
-    display = []
-    for row in holdings:
-        display.append(
-            {
-                "symbol": row.get("symbol"),
-                "shares": row.get("shares"),
-                "price": row.get("price"),
-                "value": row.get("value"),
-                "weight_pct": row.get("weight_pct"),
-                "last_action": row.get("last_action"),
-            }
-        )
-    slim = _slim_rows(display, ["symbol", "shares", "price", "value", "weight_pct", "last_action"])
-    if slim:
-        st.dataframe(slim, use_container_width=True, hide_index=True)
-    else:
-        st.info("No positions.")
+    _show_table(st, _holdings_table(holdings), "No positions.")
 
 
 def render_picker_tab(st: Any, project_root: Path | None = None) -> None:
     root = project_root or ROOT
     picker_paths = PickerPaths(project_root=root)
-    top_l, top_r = st.columns([4, 1])
-    with top_l:
-        st.caption(
-            "S&P ranking · keep names that beat buy-&-hold and made money · "
-            "rank by strategy profit"
-        )
-    with top_r:
-        if st.button("Refresh", type="secondary", key="remote_picker_refresh"):
-            st.rerun()
+    if _tab_chrome(
+        st,
+        "S&P ranking · beat buy-&-hold and made money · rank by strategy profit",
+        refresh_key="remote_picker_refresh",
+    ):
+        st.rerun()
 
     status = load_picker_status(picker_paths.state_dir)
     latest = status.get("latest_run") or {}
     pending_rows = list(status.get("pending_rows") or [])
     apply_label = _fmt_eastern(status.get("pending_apply_after"))
 
-    # --- Queued for Monday (primary) ---
     st.subheader("Queued for Monday")
     if status.get("pending_present") and pending_rows:
         st.success(f"Applies **{apply_label}** · first live-worker cycle after the open")
-        st.dataframe(
-            _picker_sleeve_table(pending_rows),
-            use_container_width=True,
-            hide_index=True,
-        )
+        _show_table(st, _picker_sleeve_table(pending_rows), "(none)")
         st.caption(
             "Strategy profit = after-fee return on the score window. "
             "Beat B&H = how much better than buy-and-hold. "
@@ -409,7 +402,6 @@ def render_picker_tab(st: Any, project_root: Path | None = None) -> None:
     else:
         st.info("Nothing queued. Weekend ranking will write pending when it next runs.")
 
-    # --- Live sleeves (what the bot trades now) ---
     st.subheader("Live sleeves now")
     active = status.get("active") or []
     if active:
@@ -417,7 +409,8 @@ def render_picker_tab(st: Any, project_root: Path | None = None) -> None:
             f"Run `{status.get('active_run_id')}` · applied "
             f"{_fmt_eastern(status.get('active_applied_at'))}"
         )
-        st.dataframe(
+        _show_table(
+            st,
             [
                 {
                     "Symbol": a.get("symbol") or "—",
@@ -435,13 +428,11 @@ def render_picker_tab(st: Any, project_root: Path | None = None) -> None:
                 }
                 for a in active
             ],
-            use_container_width=True,
-            hide_index=True,
+            "No active sleeves.",
         )
     else:
         st.info("No active sleeves yet — waiting for the first Monday apply.")
 
-    # --- Last ranking run (meta only; avoid duplicating the pending table) ---
     st.subheader("Last ranking run")
     if latest:
         mode = "dry run" if latest.get("dry_run") else "live write"
@@ -450,13 +441,8 @@ def render_picker_tab(st: Any, project_root: Path | None = None) -> None:
         latest_syms = [str(s) for s in (latest.get("selected") or [])]
         pending_syms = [str(r.get("symbol")) for r in pending_rows if r.get("symbol")]
         if latest_syms and latest_syms != pending_syms:
-            # Only show a second table when it differs from pending.
             rows = latest.get("selected_rows") or [{"symbol": s} for s in latest_syms]
-            st.dataframe(
-                _picker_sleeve_table(rows),
-                use_container_width=True,
-                hide_index=True,
-            )
+            _show_table(st, _picker_sleeve_table(rows), "(none)")
         elif latest_syms:
             st.caption("Same sleeve list as queued above.")
         else:
