@@ -117,23 +117,35 @@ def _tab_chrome(st: Any, caption: str, *, refresh_key: str) -> bool:
 
 def _show_table(st: Any, rows: list[dict[str, Any]], empty: str) -> None:
     if rows:
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        # All-string cells avoid Arrow mixed-type blank frames in newer Streamlit.
+        safe = [{k: ("" if v is None else str(v)) for k, v in row.items()} for row in rows]
+        try:
+            st.dataframe(safe, width="stretch", hide_index=True)
+        except TypeError:
+            st.dataframe(safe, use_container_width=True, hide_index=True)
     else:
         st.info(empty)
+
+
+def _fmt_shares(value: Any) -> str:
+    if value is None or value == "":
+        return "—"
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if num == int(num):
+        return f"{int(num)}"
+    return f"{num:.4f}".rstrip("0").rstrip(".")
 
 
 def _holdings_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Title-case holdings rows shared by Live + Paper."""
     out: list[dict[str, Any]] = []
     for row in rows:
-        shares = row.get("shares")
-        try:
-            share_digits = 4 if float(shares or 0) % 1 else 2
-        except (TypeError, ValueError):
-            share_digits = 2
         item: dict[str, Any] = {
             "Symbol": row.get("symbol") or "—",
-            "Shares": _fmt_num(shares, share_digits),
+            "Shares": _fmt_shares(row.get("shares")),
             "Price": _fmt_money(row.get("price")),
             "Value": _fmt_money(row.get("value")),
             "Weight": _fmt_pct(row.get("weight_pct"), signed=False)
@@ -145,11 +157,10 @@ def _holdings_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if row.get("to_buy_pct") is not None:
             item["To buy"] = _fmt_pct(row.get("to_buy_pct"))
         if row.get("flag"):
-            item["Status"] = row.get("flag")
+            item["Status"] = str(row.get("flag"))
         if row.get("last_action"):
-            item["Last action"] = row.get("last_action")
+            item["Last action"] = str(row.get("last_action"))
         out.append(item)
-    # Drop columns that are entirely empty/dash across rows
     if not out:
         return out
     keep = [k for k in out[0] if any(r.get(k) not in (None, "", "—") for r in out)]
