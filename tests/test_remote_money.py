@@ -7,9 +7,11 @@ from pathlib import Path
 from app.remote.money import (
     bh_edge_proxy,
     book_nav,
+    book_status_line,
     cash_and_invested,
     distance_to_buy_pct,
     distance_to_sell_pct,
+    filter_book_positions,
     from_equity_csv,
     live_money_snapshot,
     position_rows,
@@ -146,3 +148,55 @@ def test_live_money_snapshot_flat_day_delta_zero(tmp_path: Path) -> None:
     assert snap["nav"] == 1000.0
     assert snap["day_delta"] == 0.0
     assert snap["day_delta_pct"] == 0.0
+
+
+def test_filter_book_positions_drops_orphan_cash() -> None:
+    positions = [
+        {"symbol": "AAPL", "shares": 0.0, "cash": 1000.0},
+        {"symbol": "P", "shares": 0.0, "cash": 600.0},
+        {"symbol": "OLD", "shares": 2.0, "cash": 0.0, "last_price": 10.0},
+    ]
+    kept = filter_book_positions(
+        positions,
+        symbols=["P"],
+        picker_active=[{"symbol": "P", "awaiting_first_buy": True}],
+    )
+    syms = {r["symbol"] for r in kept}
+    assert syms == {"P", "OLD"}  # OLD kept because still long
+
+
+def test_live_money_snapshot_ignores_orphan_sleeves() -> None:
+    snap = live_money_snapshot(
+        positions=[
+            {"symbol": "AAPL", "shares": 0.0, "cash": 1000.0, "last_price": 300.0},
+            {"symbol": "MSFT", "shares": 0.0, "cash": 1000.0, "last_price": 500.0},
+            {"symbol": "P", "shares": 0.0, "cash": 600.0, "last_price": 120.0},
+            {"symbol": "FICO", "shares": 0.0, "cash": 600.0, "last_price": 800.0},
+            {"symbol": "HUM", "shares": 0.0, "cash": 600.0, "last_price": 400.0},
+            {"symbol": "AMGN", "shares": 0.0, "cash": 600.0, "last_price": 400.0},
+            {"symbol": "VLO", "shares": 0.0, "cash": 600.0, "last_price": 400.0},
+        ],
+        total_cash=3000.0,
+        symbols=["P", "FICO", "HUM", "AMGN", "VLO"],
+        picker_active=[
+            {"symbol": s, "awaiting_first_buy": True, "exit_only": False}
+            for s in ["P", "FICO", "HUM", "AMGN", "VLO"]
+        ],
+    )
+    assert snap["nav"] == 3000.0
+    assert snap["cash"] == 3000.0
+    assert snap["invested"] == 0.0
+    assert snap["bot_return_pct"] == 0.0
+    assert snap["orphan_dropped"] == 2
+    assert len(snap["holdings"]) == 5
+    assert "waiting SMA gate" in snap["status_line"]
+    assert snap["holdings"][0]["sleeve_cash"] == 600.0
+    assert snap["holdings"][0]["stock_value"] == 0.0
+
+
+def test_book_status_line_flat() -> None:
+    line = book_status_line(
+        [{"symbol": "P", "shares": 0.0}],
+        picker_active=[{"symbol": "P", "awaiting_first_buy": True}],
+    )
+    assert "flat" in line and "SMA" in line

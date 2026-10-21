@@ -4,6 +4,7 @@
 
 | Doc | Role |
 |-----|------|
+| [bot_architecture.md](bot_architecture.md) | How the bot decides and how the pieces fit (diagrams) |
 | [live_trading_investigation.md](live_trading_investigation.md) | Locked product decisions (picker §12, remote viewer §13, fees, risk) |
 | [live_trading_blueprint.md](live_trading_blueprint.md) | Historical TDD / implementer prompt series (Parts I–III) |
 | [live_trading_todo.md](live_trading_todo.md) | Ops checklist and next actions |

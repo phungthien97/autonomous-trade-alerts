@@ -147,27 +147,47 @@ def _fmt_shares(value: Any) -> str:
     return f"{num:.4f}".rstrip("0").rstrip(".")
 
 
-def _holdings_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Title-case holdings rows shared by Live + Paper."""
+def _holdings_table(rows: list[dict[str, Any]], *, live_book: bool = False) -> list[dict[str, Any]]:
+    """Title-case holdings rows. Live book splits stock vs sleeve cash."""
     out: list[dict[str, Any]] = []
     for row in rows:
-        item: dict[str, Any] = {
-            "Symbol": row.get("symbol") or "—",
-            "Shares": _fmt_shares(row.get("shares")),
-            "Price": _fmt_money(row.get("price")),
-            "Value": _fmt_money(row.get("value")),
-            "Weight": _fmt_pct(row.get("weight_pct"), signed=False)
-            if row.get("weight_pct") is not None
-            else "—",
-        }
-        if row.get("to_sell_pct") is not None:
-            item["To sell"] = _fmt_pct(row.get("to_sell_pct"))
-        if row.get("to_buy_pct") is not None:
-            item["To buy"] = _fmt_pct(row.get("to_buy_pct"))
-        if row.get("flag"):
-            item["Status"] = str(row.get("flag"))
-        if row.get("last_action"):
-            item["Last action"] = str(row.get("last_action"))
+        if live_book:
+            item: dict[str, Any] = {
+                "Symbol": row.get("symbol") or "—",
+                "Shares": _fmt_shares(row.get("shares")),
+                "Price": _fmt_money(row.get("price")),
+                "Stock value": _fmt_money(row.get("stock_value") if row.get("stock_value") is not None else row.get("mkt_value")),
+                "Sleeve cash": _fmt_money(
+                    row.get("sleeve_cash") if row.get("sleeve_cash") is not None else row.get("cash")
+                ),
+                "Sleeve total": _fmt_money(
+                    row.get("sleeve_total") if row.get("sleeve_total") is not None else row.get("value")
+                ),
+            }
+            if row.get("flag"):
+                item["Status"] = str(row.get("flag"))
+            if row.get("to_sell_pct") is not None:
+                item["To sell"] = _fmt_pct(row.get("to_sell_pct"))
+            if row.get("to_buy_pct") is not None:
+                item["To buy"] = _fmt_pct(row.get("to_buy_pct"))
+        else:
+            item = {
+                "Symbol": row.get("symbol") or "—",
+                "Shares": _fmt_shares(row.get("shares")),
+                "Price": _fmt_money(row.get("price")),
+                "Value": _fmt_money(row.get("value")),
+                "Weight": _fmt_pct(row.get("weight_pct"), signed=False)
+                if row.get("weight_pct") is not None
+                else "—",
+            }
+            if row.get("flag"):
+                item["Status"] = str(row.get("flag"))
+            if row.get("last_action"):
+                item["Last action"] = str(row.get("last_action"))
+            if row.get("to_sell_pct") is not None:
+                item["To sell"] = _fmt_pct(row.get("to_sell_pct"))
+            if row.get("to_buy_pct") is not None:
+                item["To buy"] = _fmt_pct(row.get("to_buy_pct"))
         out.append(item)
     if not out:
         return out
@@ -226,35 +246,42 @@ def render_health_strip(st: Any, strip: dict[str, Any], *, marks_source: str | N
 
 
 def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -> None:
+    book = money.get("book_capital")
+    if book is None:
+        book = money.get("starting_cash")
+    invested = money.get("invested")
+    cash = money.get("cash")
     nav = money.get("nav")
     ret = money.get("bot_return_pct")
     day_delta = money.get("day_delta")
     day_pct = money.get("day_delta_pct")
-    cash = money.get("cash")
-    invested = money.get("invested")
+
+    if money.get("status_line"):
+        st.caption(str(money["status_line"]))
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("NAV", _fmt_money(nav))
-    c2.metric("Since start", _fmt_pct(ret) if ret is not None else "—")
+    c1.metric("Book capital", _fmt_money(book))
+    c2.metric("In stocks", _fmt_money(invested))
+    c3.metric("In cash", _fmt_money(cash))
+    c4.metric("Book total", _fmt_money(nav))
+
+    r1, r2 = st.columns(2)
+    r1.metric("Since start", _fmt_pct(ret) if ret is not None else "—")
     if day_delta is not None:
         delta_label = _fmt_money(day_delta)
         if day_pct is not None:
-            c3.metric("Day P&L", delta_label, delta=_fmt_pct(day_pct))
+            r2.metric("Day P&L", delta_label, delta=_fmt_pct(day_pct))
         else:
-            c3.metric("Day P&L", delta_label)
+            r2.metric("Day P&L", delta_label)
     else:
-        c3.metric("Day P&L", "—")
-    c4.metric("Cash / invested", f"{_fmt_money(cash)} / {_fmt_money(invested)}")
+        r2.metric("Day P&L", "—")
 
     bits: list[str] = []
-    book = money.get("starting_cash")
-    if book is not None:
-        bits.append(f"book budget {_fmt_money(book)}")
     broker_cash = status.get("cash_usd")
     broker_eq = status.get("broker_equity_usd")
     if isinstance(broker_cash, (int, float)) and book is not None:
         if abs(float(broker_cash) - float(book)) > 1:
-            bits.append(f"IBKR cash {_fmt_money(broker_cash)}")
+            bits.append(f"IBKR paper account cash {_fmt_money(broker_cash)} (not bot book)")
     if isinstance(broker_eq, (int, float)):
         bits.append(f"IBKR equity {_fmt_money(broker_eq)}")
     last = status.get("last_cycle") or {}
@@ -265,6 +292,9 @@ def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -
             bits.append(f"cycle {_fmt_eastern(str(last['at_utc']))}")
         if last.get("price_source"):
             bits.append(str(last["price_source"]))
+    dropped = money.get("orphan_dropped") or 0
+    if dropped:
+        bits.append(f"hid {dropped} orphan sleeve(s)")
     if bits:
         st.caption(" · ".join(bits))
 
@@ -315,8 +345,8 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
     _render_edge_strip(st, money.get("edge") or {}, money.get("bot_return_pct"))
     _show_table(
         st,
-        _holdings_table(money.get("holdings") or []),
-        "Flat — no positions yet.",
+        _holdings_table(money.get("holdings") or [], live_book=True),
+        "No active sleeves in the book.",
     )
 
     last = status.get("last_cycle") or {}

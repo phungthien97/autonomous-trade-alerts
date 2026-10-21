@@ -10,6 +10,30 @@ from typing import Any
 from app.live.metrics import equal_weight_bh_value, returns_from_values
 
 
+def filter_book_positions(
+    positions: list[dict[str, Any]],
+    *,
+    symbols: list[str] | None = None,
+    picker_active: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Keep active-book sleeves; drop orphan cash rows from prior universes.
+
+    Keep if: in config symbols, in picker active (incl. exit_only), or still long.
+    """
+    keep: set[str] = {str(s) for s in (symbols or []) if s}
+    for row in picker_active or []:
+        sym = row.get("symbol")
+        if sym:
+            keep.add(str(sym))
+    out: list[dict[str, Any]] = []
+    for row in positions or []:
+        sym = str(row.get("symbol") or "")
+        shares = float(row.get("shares") or 0.0)
+        if sym in keep or shares > 0:
+            out.append(row)
+    return out
+
+
 def book_nav(positions: list[dict[str, Any]], total_cash: float | None = None) -> float:
     """Mark-to-market book: invested + sleeve cash. Fall back to total_cash when empty."""
     invested = 0.0
@@ -40,6 +64,35 @@ def cash_and_invested(positions: list[dict[str, Any]]) -> tuple[float, float]:
         if shares and isinstance(px, (int, float)):
             invested += shares * float(px)
     return cash, invested
+
+
+def book_status_line(
+    positions: list[dict[str, Any]],
+    *,
+    picker_active: list[dict[str, Any]] | None = None,
+) -> str:
+    """Short human status: sleeve count + flat/invested + gate hint."""
+    n = len(positions or [])
+    invested = sum(
+        1 for row in (positions or []) if float(row.get("shares") or 0.0) > 0
+    )
+    awaiting = sum(
+        1
+        for row in (picker_active or [])
+        if row.get("awaiting_first_buy") and not row.get("exit_only")
+    )
+    exit_only = sum(1 for row in (picker_active or []) if row.get("exit_only"))
+    if n == 0:
+        return "No active sleeves"
+    if invested == 0:
+        bits = [f"Active: {n} sleeves", "flat"]
+        if awaiting:
+            bits.append("waiting SMA gate" if awaiting == n else f"{awaiting} waiting SMA gate")
+        return " · ".join(bits)
+    bits = [f"Active: {n} sleeves", f"{invested} in stock", f"{n - invested} in cash"]
+    if exit_only:
+        bits.append(f"{exit_only} exit-only")
+    return " · ".join(bits)
 
 
 def _parse_dt(raw: str) -> datetime | None:
@@ -250,9 +303,12 @@ def position_rows(
                 "symbol": sym,
                 "shares": shares,
                 "price": price,
-                "cash": cash,
+                "cash": round(cash, 2),
                 "value": round(sleeve_value, 2),
                 "mkt_value": round(mkt_value, 2),
+                "stock_value": round(mkt_value, 2),
+                "sleeve_cash": round(cash, 2),
+                "sleeve_total": round(sleeve_value, 2),
                 "weight_pct": round(weight, 1) if weight is not None else None,
                 "to_sell_pct": round(to_sell, 1) if to_sell is not None else None,
                 "to_buy_pct": round(to_buy, 1) if to_buy is not None else None,
@@ -343,8 +399,13 @@ def live_money_snapshot(
 ) -> dict[str, Any]:
     """Assemble Live-tab money hero + holdings from files (and optional equity.csv)."""
     start = float(total_cash) if total_cash is not None else None
-    nav = book_nav(positions, total_cash=start)
-    cash, invested = cash_and_invested(positions)
+    book_positions = filter_book_positions(
+        positions,
+        symbols=symbols,
+        picker_active=picker_active,
+    )
+    cash, invested = cash_and_invested(book_positions)
+    nav = book_nav(book_positions, total_cash=start)
 
     equity = from_equity_csv(equity_path) if equity_path else from_equity_csv(Path("__missing__"))
     # Prefer live MTM nav; use equity.csv nav only as fallback when flat files empty
@@ -354,6 +415,9 @@ def live_money_snapshot(
     bot_return_pct = None
     if start and start > 0 and nav > 0:
         bot_return_pct = returns_vs_start(nav, start)["bot_return_pct"]
+    elif invested <= 0 and cash > 0 and start and abs(cash - start) < 0.01:
+        # Flat book matching capital — do not invent P&L from orphan rows.
+        bot_return_pct = 0.0
 
     edge: dict[str, Any] = {"ok": False, "reason": "B&H when prices available"}
     syms = list(symbols or [])
@@ -376,22 +440,25 @@ def live_money_snapshot(
     else:
         prior_prices = _prior_day_prices_from_equity_rows(equity_path) if equity_path else {}
         day_delta, day_delta_pct = _day_pnl_from_prices(
-            positions,
+            book_positions,
             latest_prices=equity.get("latest_prices") or {},
             prior_prices=prior_prices,
         )
         if day_delta is not None and nav > 0 and day_delta_pct is None:
             day_delta_pct = (day_delta / nav) * 100.0
 
-    holdings = position_rows(positions, nav=nav, picker_active=picker_active)
+    holdings = position_rows(book_positions, nav=nav, picker_active=picker_active)
     return {
         "nav": nav,
         "cash": cash,
         "invested": invested,
+        "book_capital": start,
         "bot_return_pct": bot_return_pct,
         "day_delta": day_delta,
         "day_delta_pct": day_delta_pct,
         "edge": edge,
         "holdings": holdings,
         "starting_cash": start,
+        "status_line": book_status_line(book_positions, picker_active=picker_active),
+        "orphan_dropped": max(0, len(positions or []) - len(book_positions)),
     }

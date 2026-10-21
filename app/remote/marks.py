@@ -53,20 +53,23 @@ def overlay_ibkr_marks(
             if sym in price_book:
                 updated["last_price"] = float(price_book[sym])
             rows.append(updated)
-        # Include broker-only symbols not yet in file state
+        # Include broker longs not yet in file state (still held after a drop).
+        # Skip zero-share broker noise (flat symbols outside file state).
         known = {r["symbol"] for r in rows}
         for sym, shares in positions.items():
-            if sym not in known:
-                rows.append(
-                    {
-                        "symbol": sym,
-                        "shares": float(shares),
-                        "cash": 0.0,
-                        "last_price": float(price_book[sym]) if sym in price_book else None,
-                        "peak": None,
-                        "trough": None,
-                    }
-                )
+            qty = float(shares)
+            if sym in known or qty <= 0:
+                continue
+            rows.append(
+                {
+                    "symbol": sym,
+                    "shares": qty,
+                    "cash": 0.0,
+                    "last_price": float(price_book[sym]) if sym in price_book else None,
+                    "peak": None,
+                    "trough": None,
+                }
+            )
         out["positions"] = sorted(rows, key=lambda r: r["symbol"])
         out["marks_source"] = "ibkr"
     except Exception as exc:  # noqa: BLE001 — dashboard must fail soft
