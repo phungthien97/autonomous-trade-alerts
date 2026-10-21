@@ -20,6 +20,9 @@ class PendingSymbol:
     bh_return: float | None = None
     name: str = ""
     sector: str = ""
+    allocated_cash: float | None = None
+    last_price: float | None = None
+    shares_budget: int | None = None
 
 
 @dataclass
@@ -53,6 +56,13 @@ class PendingSelection:
                 bh_return=None if row.get("bh_return") is None else float(row["bh_return"]),
                 name=str(row.get("name") or "").strip(),
                 sector=str(row.get("sector") or "").strip(),
+                allocated_cash=(
+                    None if row.get("allocated_cash") is None else float(row["allocated_cash"])
+                ),
+                last_price=None if row.get("last_price") is None else float(row["last_price"]),
+                shares_budget=(
+                    None if row.get("shares_budget") is None else int(row["shares_budget"])
+                ),
             )
             for row in raw.get("symbols", [])
         ]

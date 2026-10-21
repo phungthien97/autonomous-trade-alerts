@@ -35,7 +35,7 @@ from app.picker.pending import (
 from app.picker.rank import SelectedSymbol, select_symbols
 from app.picker.rank_symbol import SymbolRankResult, rank_one_symbol
 from app.picker.score import SymbolScore, score_symbol_series
-from app.picker.sizing import sleeve_buy_budget
+from app.picker.sizing import allocate_priority_sleeves, sleeve_buy_budget
 from app.picker.soft_rotate import SoftRotateFlags, SoftRotatePlan, plan_soft_rotate
 from app.picker.sp500 import (
     Sp500Constituent,
@@ -112,6 +112,7 @@ __all__ = [
     "save_pending",
     "score_symbol_series",
     "select_symbols",
+    "allocate_priority_sleeves",
     "sleeve_buy_budget",
     "sma",
 ]

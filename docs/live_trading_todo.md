@@ -126,7 +126,7 @@ Implement blueprint **Part II** prompts **P01–P22** in order. Spec: investigat
 | Done | Prompt | Deliverable | Primary tests |
 |------|--------|-------------|----------------|
 | [x] | P17 | 20h SMA first-buy gate | `tests/test_picker_trend_gate.py` |
-| [x] | P18 | Equal free-cash sleeve budget | `tests/test_picker_sizing.py` |
+| [x] | P18 | Equal free-cash sleeve budget + priority whole-share allocate | `tests/test_picker_sizing.py` |
 | [x] | P19 | Wire gates into `live_worker` | `tests/test_live_picker_gates.py` (or extend live worker tests) |
 | [x] | P20 | Wire exit_only / list into paper `worker` | `tests/test_worker_picker_flags.py` |
 

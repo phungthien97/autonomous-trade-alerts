@@ -97,9 +97,14 @@ def run_ranking(
     send_email: bool = False,
     dry_run: bool = False,
     initial_cash: float = 1000.0,
+    book_cash: float | None = None,
     profiles: Mapping[str, Sp500Constituent] | None = None,
 ) -> RankingRunResult:
-    """Score S&P names and write pending selection (unless dry_run / abort)."""
+    """Score S&P names and write pending selection (unless dry_run / abort).
+
+    ``initial_cash`` is the score/optimize sleeve size. ``book_cash`` is the live
+    book used for priority whole-share sleeve allocation (defaults to initial_cash).
+    """
     as_of_d = _as_of_date(as_of)
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     active = list(active_symbols or [])
@@ -147,6 +152,7 @@ def run_ranking(
         )
 
     ranked_rows: list[dict] = []
+    last_prices: dict[str, float] = {}
     for symbol, windows_closes in fetched.ok.items():
         result = rank_one_symbol(
             windows_closes.opt_closes,
@@ -156,8 +162,20 @@ def run_ranking(
         row = result.as_dict()
         row["symbol"] = symbol
         ranked_rows.append(row)
+        score = list(windows_closes.score_closes or [])
+        if score:
+            try:
+                last_prices[symbol] = float(score[-1])
+            except (TypeError, ValueError):
+                pass
 
-    selected = select_symbols(ranked_rows, max_n=5)
+    allocate_cash = float(book_cash) if book_cash is not None else float(initial_cash)
+    selected = select_symbols(
+        ranked_rows,
+        max_n=5,
+        prices=last_prices,
+        total_cash=allocate_cash,
+    )
     selected_rows = _enrich_selected(selected, profiles)
     body = build_success_email_body(
         run_id=run_id,
@@ -204,6 +222,9 @@ def run_ranking(
                     bh_return=s.bh_return,
                     name=str(row.get("name") or ""),
                     sector=str(row.get("sector") or ""),
+                    allocated_cash=s.allocated_cash,
+                    last_price=s.last_price,
+                    shares_budget=s.shares_budget,
                 )
                 for s, row in zip(selected, selected_rows, strict=True)
             ],

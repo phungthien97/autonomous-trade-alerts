@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from app.live.config import load_live_config
 from app.paths import LivePaths, PickerPaths, StatePaths
 from app.picker.active import ActiveSelection, ActiveSymbol, load_active, save_active
-from app.picker.apply_live import apply_to_live_config
+from app.picker.apply_live import apply_allocated_cash_to_live_state, apply_to_live_config
 from app.picker.apply_paper import apply_to_paper_v1, apply_to_paper_v2
 from app.picker.pending import load_pending, mark_applied
 from app.picker.soft_rotate import plan_soft_rotate
@@ -98,6 +99,17 @@ def apply_pending_selection(
         live_paths.config_path,
         pending.symbols,
         extra_symbols=plan.dropped,
+    )
+    live_total = None
+    if live_paths.config_path.is_file():
+        try:
+            live_total = float(load_live_config(live_paths.config_path).total_cash)
+        except (OSError, TypeError, ValueError, KeyError):
+            live_total = None
+    apply_allocated_cash_to_live_state(
+        live_paths.state_path,
+        pending.symbols,
+        equal_fallback_total=live_total,
     )
     apply_to_paper_v1(
         v1_paths.config_path,

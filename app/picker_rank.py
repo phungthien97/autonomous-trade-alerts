@@ -15,7 +15,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from urllib.request import urlopen
 
-from app.paths import PickerPaths, ROOT
+from app.live.config import load_live_config
+from app.paths import LivePaths, PickerPaths, ROOT
 from app.picker.active import load_active
 from app.picker.ibkr_bars import IbkrHourlyBarProvider
 from app.picker.run import run_ranking
@@ -141,6 +142,14 @@ def main(argv: list[str] | None = None) -> int:
     def sp500_loader() -> list[str]:
         return [c.symbol for c in constituents]
 
+    book_cash = 1000.0
+    live_cfg_path = LivePaths(project_root=root).config_path
+    if live_cfg_path.is_file():
+        try:
+            book_cash = float(load_live_config(live_cfg_path).total_cash)
+        except (OSError, TypeError, ValueError, KeyError):
+            book_cash = 1000.0
+
     result = run_ranking(
         as_of=as_of,
         sp500_loader=sp500_loader,
@@ -149,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         active_symbols=active_symbols,
         send_email=not args.no_email,
         dry_run=args.dry_run,
+        book_cash=book_cash,
         profiles=profiles,
     )
     print(f"ok={result.ok} aborted={result.aborted} dry_run={result.dry_run}")

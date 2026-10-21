@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from app.picker.sizing import allocate_priority_sleeves
+
 
 @dataclass(frozen=True)
 class SelectedSymbol:
@@ -14,6 +16,9 @@ class SelectedSymbol:
     buy_rise: float
     sell_drop: float
     bh_return: float | None = None
+    allocated_cash: float | None = None
+    last_price: float | None = None
+    shares_budget: int | None = None
 
 
 def _get(row: Mapping[str, Any] | Any, key: str, default: Any = None) -> Any:
@@ -22,19 +27,7 @@ def _get(row: Mapping[str, Any] | Any, key: str, default: Any = None) -> Any:
     return getattr(row, key, default)
 
 
-def select_symbols(
-    results: Sequence[Mapping[str, Any] | Any],
-    max_n: int = 5,
-) -> list[SelectedSymbol]:
-    """Keep names that beat B&H and made money; top ``max_n`` by strategy profit.
-
-    Filters: not skipped, ``edge >= 0``, ``strategy_return >= 0``.
-    Rank by ``strategy_return`` descending (maximize sleeve dollars).
-    Tie-break: higher ``edge``, then alphabetical ``symbol``.
-    """
-    if max_n < 0:
-        raise ValueError("max_n must be >= 0")
-
+def _eligible_ranked(results: Sequence[Mapping[str, Any] | Any]) -> list[SelectedSymbol]:
     eligible: list[SelectedSymbol] = []
     for row in results:
         if bool(_get(row, "skipped", False)):
@@ -65,4 +58,54 @@ def select_symbols(
         )
 
     eligible.sort(key=lambda s: (-s.strategy_return, -s.edge, s.symbol))
-    return eligible[:max_n]
+    return eligible
+
+
+def select_symbols(
+    results: Sequence[Mapping[str, Any] | Any],
+    max_n: int = 5,
+    *,
+    prices: Mapping[str, float] | None = None,
+    total_cash: float | None = None,
+) -> list[SelectedSymbol]:
+    """Keep names that beat B&H and made money; top ``max_n`` by strategy profit.
+
+    Filters: not skipped, ``edge >= 0``, ``strategy_return >= 0``.
+    Rank by ``strategy_return`` descending (maximize sleeve dollars).
+    Tie-break: higher ``edge``, then alphabetical ``symbol``.
+
+    When ``prices`` and ``total_cash`` are provided, walk the full ranked list and
+    assign whole-share sleeve cash (priority stretch for names above the even split).
+    May return fewer than ``max_n`` if the list runs out of affordable names.
+    """
+    if max_n < 0:
+        raise ValueError("max_n must be >= 0")
+
+    eligible = _eligible_ranked(results)
+    if not prices or total_cash is None:
+        return eligible[:max_n]
+
+    by_symbol = {s.symbol: s for s in eligible}
+    allocations = allocate_priority_sleeves(
+        [s.symbol for s in eligible],
+        prices,
+        float(total_cash),
+        max_n=max_n,
+    )
+    out: list[SelectedSymbol] = []
+    for alloc in allocations:
+        base = by_symbol[alloc.symbol]
+        out.append(
+            SelectedSymbol(
+                symbol=base.symbol,
+                edge=base.edge,
+                strategy_return=base.strategy_return,
+                buy_rise=base.buy_rise,
+                sell_drop=base.sell_drop,
+                bh_return=base.bh_return,
+                allocated_cash=alloc.cash,
+                last_price=alloc.price,
+                shares_budget=alloc.shares,
+            )
+        )
+    return out

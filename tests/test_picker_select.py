@@ -48,3 +48,35 @@ def test_select_symbols_tie_break_edge_then_symbol() -> None:
     selected = select_symbols(rows, max_n=3)
     # Same strategy_return → higher edge first, then alphabetical
     assert [s.symbol for s in selected] == ["AA", "BB", "CC"]
+
+
+def test_select_symbols_priority_cash_skips_unaffordable_and_fills_from_list() -> None:
+    rows = [
+        {"symbol": "RICH", "edge": 0.5, "strategy_return": 0.9, "buy_rise": 0.02, "sell_drop": 0.03, "skipped": False},
+        {"symbol": "A", "edge": 0.1, "strategy_return": 0.5, "buy_rise": 0.02, "sell_drop": 0.03, "skipped": False},
+        {"symbol": "B", "edge": 0.1, "strategy_return": 0.4, "buy_rise": 0.02, "sell_drop": 0.03, "skipped": False},
+        {"symbol": "C", "edge": 0.1, "strategy_return": 0.3, "buy_rise": 0.02, "sell_drop": 0.03, "skipped": False},
+        {"symbol": "D", "edge": 0.1, "strategy_return": 0.2, "buy_rise": 0.02, "sell_drop": 0.03, "skipped": False},
+        {"symbol": "E", "edge": 0.1, "strategy_return": 0.1, "buy_rise": 0.02, "sell_drop": 0.03, "skipped": False},
+    ]
+    prices = {"RICH": 5000.0, "A": 100.0, "B": 100.0, "C": 100.0, "D": 100.0, "E": 100.0}
+    selected = select_symbols(rows, max_n=5, prices=prices, total_cash=1000.0)
+    assert [s.symbol for s in selected] == ["A", "B", "C", "D", "E"]
+    assert all(s.allocated_cash and s.allocated_cash >= 100.0 for s in selected)
+
+
+def test_select_symbols_priority_cash_stretches_top_name() -> None:
+    rows = [
+        {"symbol": "P", "edge": 0.1, "strategy_return": 0.5, "buy_rise": 0.02, "sell_drop": 0.03, "skipped": False},
+        {"symbol": "HUM", "edge": 0.1, "strategy_return": 0.4, "buy_rise": 0.02, "sell_drop": 0.03, "skipped": False},
+    ]
+    selected = select_symbols(
+        rows,
+        max_n=2,
+        prices={"P": 800.0, "HUM": 400.0},
+        total_cash=1200.0,
+    )
+    assert [s.symbol for s in selected] == ["P", "HUM"]
+    assert selected[0].allocated_cash == 800.0
+    assert selected[0].shares_budget == 1
+    assert selected[1].allocated_cash == 400.0

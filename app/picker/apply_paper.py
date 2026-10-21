@@ -129,10 +129,20 @@ def apply_to_paper_version(
     assets_state = state.get("assets")
     if not isinstance(assets_state, dict):
         assets_state = {}
+    pending_cash: dict[str, float] = {}
+    for row in symbols:
+        if isinstance(row, PendingSymbol) and row.allocated_cash is not None:
+            pending_cash[row.symbol.upper()] = float(row.allocated_cash)
+        elif isinstance(row, dict) and row.get("allocated_cash") is not None:
+            pending_cash[str(row["symbol"]).upper()] = float(row["allocated_cash"])
+
     for asset in new_assets:
         sym = asset["symbol"]
         if sym not in assets_state:
-            assets_state[sym] = _default_state_row(initial_cash)
+            seed = pending_cash.get(sym, initial_cash)
+            assets_state[sym] = _default_state_row(seed)
+        elif sym in pending_cash and float(assets_state[sym].get("shares") or 0.0) <= 0:
+            assets_state[sym]["cash"] = pending_cash[sym]
         # Persist soft-rotate flags beside strategy fields for the worker.
         assets_state[sym]["exit_only"] = bool(asset.get("exit_only", False))
         assets_state[sym]["awaiting_first_buy"] = bool(asset.get("awaiting_first_buy", False))
