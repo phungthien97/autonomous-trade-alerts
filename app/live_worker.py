@@ -38,9 +38,54 @@ from app.picker.active import (
 )
 from app.picker.apply import maybe_apply_pending
 from app.picker.sizing import sleeve_buy_budget
-from app.picker.trend_gate import allow_first_buy
+from app.picker.trend_gate import allow_first_buy, sma
 from app.risk.escalate import RiskController
 from app.strategy import StrategyState, portfolio_value, step_signal
+
+
+def _fmt_usd(value: float) -> str:
+    return f"${float(value):,.2f}"
+
+
+def _first_buy_gate_reason(price: float, history: list[float]) -> str:
+    avg = sma(history, window=20)
+    if avg is None:
+        return (
+            "First buy waiting: need 20 hourly closes to check the average "
+            f"(have {len(history)})"
+        )
+    return (
+        f"First buy waiting: price {_fmt_usd(price)} is below "
+        f"20-hour average {_fmt_usd(avg)}"
+    )
+
+
+def _zero_buy_qty_reason(*, price: float, cash: float) -> str:
+    return (
+        f"Buy signal, but cash {_fmt_usd(cash)} can't buy 1 share at {_fmt_usd(price)} "
+        f"(need at least {_fmt_usd(price)})"
+    )
+
+
+def _humanize_signal_reason(
+    signal: str | None,
+    *,
+    price: float,
+    trough_before: float | None,
+    peak_before: float | None,
+    fallback: str,
+) -> str:
+    if signal == "BUY" and trough_before is not None:
+        return (
+            f"Buy signal: price {_fmt_usd(price)} bounced from recent low "
+            f"{_fmt_usd(trough_before)}"
+        )
+    if signal == "SELL" and peak_before is not None:
+        return (
+            f"Sell signal: price {_fmt_usd(price)} dropped from recent high "
+            f"{_fmt_usd(peak_before)}"
+        )
+    return fallback
 
 
 def _load_state(path: Path) -> dict:
@@ -195,24 +240,33 @@ def run_live_once(
             trough=None if stored.get("trough") is None else float(stored["trough"]),
         )
         probe = StrategyState(cash=before.cash, shares=before.shares, peak=before.peak, trough=before.trough)
+        trough_before = None if before.trough is None else float(before.trough)
+        peak_before = None if before.peak is None else float(before.peak)
         signal, signal_reason = step_signal(
             probe,
             price,
             asset.buy_rise_pct / 100.0,
             asset.sell_drop_pct / 100.0,
         )
+        signal_reason = _humanize_signal_reason(
+            signal,
+            price=price,
+            trough_before=trough_before,
+            peak_before=peak_before,
+            fallback=signal_reason,
+        )
         flags = active_flags.get(symbol)
         gate_reason = None
         if signal == "BUY" and flags is not None and flags.exit_only:
             signal = None
             gate_reason = "exit_only"
-            signal_reason = "exit_only blocks buy"
+            signal_reason = "Dropped from picker — sells only; buys blocked"
         elif signal == "BUY" and flags is not None and flags.awaiting_first_buy:
             history = closes_by_symbol.get(symbol) or []
             if not allow_first_buy(history, price=price):
                 signal = None
                 gate_reason = "sma20_gate"
-                signal_reason = "awaiting_first_buy blocked by SMA20 gate"
+                signal_reason = _first_buy_gate_reason(price, history)
         if gate_reason is not None:
             # Discard probe fill; keep cash sleeve and update trough only.
             trough = before.trough
@@ -243,7 +297,16 @@ def run_live_once(
             buy_cash_cap=buy_cap,
         )
         if gate_reason and intent is None and plan_why == "no signal":
-            plan_why = gate_reason
+            if gate_reason == "sma20_gate":
+                plan_why = "waiting on 20-hour average"
+            elif gate_reason == "exit_only":
+                plan_why = "sells only"
+            else:
+                plan_why = gate_reason
+        if signal == "BUY" and plan_why == "zero quantity":
+            cash_for_msg = float(buy_cap) if buy_cap is not None else float(before.cash)
+            signal_reason = _zero_buy_qty_reason(price=price, cash=cash_for_msg)
+            plan_why = "can't afford 1 share"
         filled = False
         exec_status = None
         if intent is not None:
