@@ -413,15 +413,26 @@ def live_money_snapshot(
         nav = float(equity["nav"])
 
     bot_return_pct = None
-    if start and start > 0 and nav > 0:
-        bot_return_pct = returns_vs_start(nav, start)["bot_return_pct"]
-    elif invested <= 0 and cash > 0 and start and abs(cash - start) < 0.01:
-        # Flat book matching capital — do not invent P&L from orphan rows.
-        bot_return_pct = 0.0
-
     edge: dict[str, Any] = {"ok": False, "reason": "B&H when prices available"}
+    # Flat book (no shares): no trading P&L yet — do not invent a loss from
+    # under-allocated sleeve cash or from equity.csv B&H marks.
+    if invested <= 0:
+        bot_return_pct = 0.0
+        if start is not None and start > 0 and cash + 0.01 < start:
+            # Unassigned leftover after whole-share sizing — still part of the book.
+            nav = float(start)
+            cash = float(start)
+    elif start and start > 0 and nav > 0:
+        bot_return_pct = returns_vs_start(nav, start)["bot_return_pct"]
+
     syms = list(symbols or [])
-    if start and syms and equity.get("start_prices") and equity.get("latest_prices"):
+    if (
+        invested > 0
+        and start
+        and syms
+        and equity.get("start_prices")
+        and equity.get("latest_prices")
+    ):
         edge = bh_edge_proxy(
             starting_cash=start,
             symbols=syms,

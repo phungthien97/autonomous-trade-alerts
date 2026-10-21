@@ -77,6 +77,7 @@ def test_select_symbols_priority_cash_stretches_top_name() -> None:
         total_cash=1200.0,
     )
     assert [s.symbol for s in selected] == ["P", "HUM"]
-    assert selected[0].allocated_cash == 800.0
     assert selected[0].shares_budget == 1
-    assert selected[1].allocated_cash == 400.0
+    assert selected[0].allocated_cash is not None and selected[0].allocated_cash >= 800.0
+    assert selected[1].allocated_cash is not None and selected[1].allocated_cash >= 400.0
+    assert abs(sum(s.allocated_cash or 0 for s in selected) - 1200.0) < 0.02

@@ -94,4 +94,28 @@ def allocate_priority_sleeves(
         shares, cost = got
         out.append(SleeveAllocation(symbol=sym, price=px, shares=shares, cash=cost))
         pool -= cost
+    # Park leftover cents/dollars in sleeves so book cash still equals total_cash.
+    # (Whole-share costs rarely sum exactly to the book.)
+    if out and pool > 1e-9:
+        n = len(out)
+        each = pool / float(n)
+        out = [
+            SleeveAllocation(
+                symbol=a.symbol,
+                price=a.price,
+                shares=a.shares,
+                cash=round(a.cash + each, 2),
+            )
+            for a in out
+        ]
+        # Fix rounding drift on the last sleeve.
+        drift = float(total_cash) - sum(a.cash for a in out)
+        if abs(drift) >= 0.005:
+            last = out[-1]
+            out[-1] = SleeveAllocation(
+                symbol=last.symbol,
+                price=last.price,
+                shares=last.shares,
+                cash=round(last.cash + drift, 2),
+            )
     return out

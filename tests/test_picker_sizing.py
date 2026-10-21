@@ -43,9 +43,17 @@ def test_allocate_priority_sleeves_funds_expensive_top_names() -> None:
     }
     out = allocate_priority_sleeves(ranked, prices, 3000.0, max_n=5)
     assert [a.symbol for a in out] == ["P", "FICO", "HUM", "AMGN", "VLO"]
-    assert out[0].cash == 800.0
-    assert out[1].cash == 800.0
-    assert sum(a.cash for a in out) <= 3000.0 + 1e-9
+    assert out[0].cash >= 800.0  # stretch + leftover park
+    assert out[1].cash >= 800.0
+    assert abs(sum(a.cash for a in out) - 3000.0) < 0.02
+
+
+def test_allocate_priority_sleeves_parks_leftover_so_book_sums() -> None:
+    ranked = ["A", "B"]
+    prices = {"A": 100.0, "B": 100.0}
+    out = allocate_priority_sleeves(ranked, prices, 250.0, max_n=2)
+    assert abs(sum(a.cash for a in out) - 250.0) < 0.02
+    assert all(a.shares >= 1 for a in out)
 
 
 def test_allocate_priority_sleeves_walks_list_when_tail_unaffordable() -> None:
@@ -68,4 +76,6 @@ def test_allocate_priority_sleeves_may_return_fewer_than_max() -> None:
     prices = {"A": 400.0, "B": 400.0}
     out = allocate_priority_sleeves(ranked, prices, 500.0, max_n=5)
     assert [a.symbol for a in out] == ["A"]
-    assert out[0].cash == 400.0
+    # Only A fits; leftover $100 parks on that sleeve so book still sums to $500.
+    assert abs(out[0].cash - 500.0) < 0.02
+    assert out[0].shares == 1

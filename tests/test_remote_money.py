@@ -194,6 +194,27 @@ def test_live_money_snapshot_ignores_orphan_sleeves() -> None:
     assert snap["holdings"][0]["stock_value"] == 0.0
 
 
+def test_live_money_snapshot_flat_underallocated_not_a_loss() -> None:
+    """Whole-share sleeve cash can sum under book capital before leftover is parked."""
+    snap = live_money_snapshot(
+        positions=[
+            {"symbol": "FICO", "shares": 0.0, "cash": 800.0, "last_price": 800.0},
+            {"symbol": "HUM", "shares": 0.0, "cash": 428.0, "last_price": 428.0},
+        ],
+        total_cash=3000.0,
+        symbols=["FICO", "HUM"],
+        picker_active=[
+            {"symbol": "FICO", "awaiting_first_buy": True},
+            {"symbol": "HUM", "awaiting_first_buy": True},
+        ],
+    )
+    assert snap["invested"] == 0.0
+    assert snap["nav"] == 3000.0
+    assert snap["cash"] == 3000.0
+    assert snap["bot_return_pct"] == 0.0
+    assert snap["edge"].get("ok") is False
+
+
 def test_book_status_line_flat() -> None:
     line = book_status_line(
         [{"symbol": "P", "shares": 0.0}],
