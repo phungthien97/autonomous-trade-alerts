@@ -118,7 +118,13 @@ def _tab_chrome(st: Any, caption: str, *, refresh_key: str) -> bool:
     return clicked
 
 
-def _show_table(st: Any, rows: list[dict[str, Any]], empty: str) -> None:
+def _show_table(
+    st: Any,
+    rows: list[dict[str, Any]],
+    empty: str,
+    *,
+    wrap_cols: tuple[str, ...] = (),
+) -> None:
     if not rows:
         st.info(empty)
         return
@@ -126,11 +132,24 @@ def _show_table(st: Any, rows: list[dict[str, Any]], empty: str) -> None:
     # collapsing to a single narrow Symbol column on some hosts.
     cols = list(rows[0].keys())
     safe = [{k: ("" if row.get(k) is None else str(row.get(k))) for k in cols} for row in rows]
+    column_config = None
+    if wrap_cols:
+        try:
+            column_config = {
+                name: st.column_config.TextColumn(name, width="large")
+                for name in wrap_cols
+                if name in cols
+            }
+        except Exception:  # noqa: BLE001 — older Streamlit
+            column_config = None
     try:
         import pandas as pd
 
         frame = pd.DataFrame(safe, columns=cols)
-        st.dataframe(frame, use_container_width=True, hide_index=True)
+        kwargs: dict[str, Any] = {"use_container_width": True, "hide_index": True}
+        if column_config:
+            kwargs["column_config"] = column_config
+        st.dataframe(frame, **kwargs)
     except Exception:  # noqa: BLE001
         st.dataframe(safe, use_container_width=True, hide_index=True)
 
@@ -358,8 +377,6 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
             if not isinstance(d, dict):
                 continue
             reason = d.get("signal_reason") or ""
-            if isinstance(reason, str) and len(reason) > 64:
-                reason = reason[:61] + "…"
             rows.append(
                 {
                     "Symbol": d.get("symbol") or "—",
@@ -369,7 +386,7 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
                     "Reason": reason or "—",
                 }
             )
-        _show_table(st, rows, "No decisions this cycle.")
+        _show_table(st, rows, "No decisions this cycle.", wrap_cols=("Reason", "Plan"))
     else:
         st.caption("No cycle decisions recorded yet.")
 
