@@ -156,6 +156,7 @@ def test_latest_hourly_closes_rth(monkeypatch) -> None:
         "app.broker.ibkr._stock_contract",
         lambda symbol: SimpleNamespace(symbol=symbol, exchange="SMART", currency="USD"),
     )
-    prices, bars = IbkrBroker(ib=_HistIB()).latest_hourly_closes(["AAPL"])
+    prices, bars, closes = IbkrBroker(ib=_HistIB()).latest_hourly_closes(["AAPL"])
     assert prices == {"AAPL": 101.5}
     assert bars["AAPL"].startswith("2026-10-07T19:00:00")
+    assert closes == {"AAPL": [100.0, 101.5]}

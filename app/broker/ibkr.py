@@ -110,14 +110,16 @@ class IbkrBroker:
         *,
         use_rth: bool = True,
         duration: str = "5 D",
-    ) -> tuple[dict[str, float], dict[str, str]]:
+    ) -> tuple[dict[str, float], dict[str, str], dict[str, list[float]]]:
         """Latest TRADES hourly bar close per symbol (RTH by default — R6).
 
         Uses complimentary IBKR US historical data when entitled. Returns
-        ({symbol: close}, {symbol: bar_ts_iso}); missing symbols are omitted.
+        ({symbol: close}, {symbol: bar_ts_iso}, {symbol: close_series}).
+        Missing symbols are omitted. ``close_series`` feeds the first-buy SMA gate.
         """
         prices: dict[str, float] = {}
         bars: dict[str, str] = {}
+        closes: dict[str, list[float]] = {}
         for symbol in symbols:
             contract = _stock_contract(symbol)
             qualified = self.ib.qualifyContracts(contract)
@@ -137,6 +139,8 @@ class IbkrBroker:
                 self.ib.sleep(0.5)
             if not hist:
                 continue
+            series = [float(bar.close) for bar in hist]
+            closes[symbol] = series
             last = hist[-1]
             prices[symbol] = float(last.close)
             date = last.date
@@ -144,7 +148,7 @@ class IbkrBroker:
                 bars[symbol] = date.isoformat()
             else:
                 bars[symbol] = str(date)
-        return prices, bars
+        return prices, bars, closes
 
     def historical_hourly_closes(
         self,

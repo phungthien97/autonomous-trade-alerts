@@ -413,12 +413,15 @@ def _safe_notify(kind: str, body: str, flags: dict | None) -> None:
         print(f"notify_failed kind={kind} error={exc}")
 
 
-def _latest_prices_yahoo(symbols: list[str]) -> tuple[dict[str, float], dict[str, str]]:
+def _latest_prices_yahoo(
+    symbols: list[str],
+) -> tuple[dict[str, float], dict[str, str], dict[str, list[float]]]:
     """Yahoo hourly closes (fallback when IBKR bars unavailable)."""
     import yfinance as yf
 
     prices: dict[str, float] = {}
     bars: dict[str, str] = {}
+    closes: dict[str, list[float]] = {}
     now_iso = datetime.now(timezone.utc).isoformat()
     for symbol in symbols:
         ticker = yf.Ticker(symbol)
@@ -428,32 +431,54 @@ def _latest_prices_yahoo(symbols: list[str]) -> tuple[dict[str, float], dict[str
         if hist is None or hist.empty:
             print(f"price_missing symbol={symbol}", file=sys.stderr)
             continue
+        series = [float(x) for x in hist["Close"].tolist()]
+        closes[symbol] = series
         last = hist.iloc[-1]
         prices[symbol] = float(last["Close"])
         idx = hist.index[-1]
         bars[symbol] = idx.isoformat() if hasattr(idx, "isoformat") else f"{symbol}:{now_iso}"
-    return prices, bars
+    return prices, bars, closes
+
+
+def _unpack_hourly_book(
+    result: object,
+) -> tuple[dict[str, float], dict[str, str], dict[str, list[float]]]:
+    """Accept 2-tuple (legacy) or 3-tuple (prices, bars, closes) from brokers."""
+    if not isinstance(result, tuple):
+        return {}, {}, {}
+    if len(result) >= 3:
+        prices, bars, closes = result[0], result[1], result[2]
+        return dict(prices or {}), dict(bars or {}), dict(closes or {})
+    if len(result) == 2:
+        prices, bars = result
+        return dict(prices or {}), dict(bars or {}), {}
+    return {}, {}, {}
 
 
 def _latest_prices(
     symbols: list[str], broker_inner=None
-) -> tuple[dict[str, float], dict[str, str], str]:
-    """IBKR RTH hourly TRADES primary; Yahoo is an explicit last-resort fallback."""
+) -> tuple[dict[str, float], dict[str, str], dict[str, list[float]], str]:
+    """IBKR RTH hourly TRADES primary; Yahoo is an explicit last-resort fallback.
+
+    Also returns per-symbol close series for the first-buy SMA20 gate.
+    """
     if not symbols:
-        return {}, {}, "no_symbols"
+        return {}, {}, {}, "no_symbols"
     if broker_inner is not None and hasattr(broker_inner, "latest_hourly_closes"):
         try:
-            prices, bars = broker_inner.latest_hourly_closes(list(symbols), use_rth=True)
+            prices, bars, closes = _unpack_hourly_book(
+                broker_inner.latest_hourly_closes(list(symbols), use_rth=True)
+            )
             if prices:
-                print(f"price_source=ibkr_rth_hourly n={len(prices)}")
-                return prices, bars, "ibkr_rth_hourly"
+                print(f"price_source=ibkr_rth_hourly n={len(prices)} closes={len(closes)}")
+                return prices, bars, closes, "ibkr_rth_hourly"
             print("price_source=ibkr_empty; yahoo_fallback", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001
             print(f"price_source=ibkr_error ({exc}); yahoo_fallback", file=sys.stderr)
-    prices, bars = _latest_prices_yahoo(list(symbols))
+    prices, bars, closes = _latest_prices_yahoo(list(symbols))
     if prices:
-        print(f"price_source=yahoo_fallback n={len(prices)}")
-    return prices, bars, "yahoo_fallback"
+        print(f"price_source=yahoo_fallback n={len(prices)} closes={len(closes)}")
+    return prices, bars, closes, "yahoo_fallback"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -524,7 +549,7 @@ def main(argv: list[str] | None = None) -> int:
     risk = RiskController(paths.risk_path)
     audit = AuditLog(paths.audit_log_path)
     now = datetime.now(timezone.utc)
-    prices, bars, price_source = _latest_prices(list(config.symbols), broker_inner=inner)
+    prices, bars, closes, price_source = _latest_prices(list(config.symbols), broker_inner=inner)
     if not prices:
         print("No prices available; skipping cycle", file=sys.stderr)
         _write_last_cycle(
@@ -542,7 +567,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     try:
-        summary = run_live_once(paths, broker, risk, audit, now, prices, bars)
+        summary = run_live_once(
+            paths,
+            broker,
+            risk,
+            audit,
+            now,
+            prices,
+            bars,
+            closes_by_symbol=closes,
+        )
         print(summary)
         _write_last_cycle(
             paths,
