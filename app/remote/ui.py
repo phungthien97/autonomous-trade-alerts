@@ -371,6 +371,12 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
     last = status.get("last_cycle") or {}
     decisions = last.get("decisions") if isinstance(last, dict) else None
     st.subheader("Last cycle")
+    if isinstance(last, dict):
+        when = last.get("at_eastern") or (
+            _fmt_eastern(str(last["at_utc"])) if last.get("at_utc") else None
+        )
+        if when:
+            st.caption(f"Worker ran · {when}")
     if isinstance(decisions, list) and decisions:
         rows = []
         for d in decisions:
