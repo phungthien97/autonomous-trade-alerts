@@ -67,6 +67,24 @@ def _zero_buy_qty_reason(*, price: float, cash: float) -> str:
     )
 
 
+def _waiting_buy_reason(*, price: float, trough: float, buy_rise: float) -> str:
+    trigger = float(trough) * (1.0 + float(buy_rise))
+    pct = float(buy_rise) * 100.0
+    return (
+        f"Waiting: need {_fmt_usd(trigger)} "
+        f"(+{pct:g}% from low {_fmt_usd(trough)}); now {_fmt_usd(price)}"
+    )
+
+
+def _waiting_sell_reason(*, price: float, peak: float, sell_drop: float) -> str:
+    trigger = float(peak) * (1.0 - float(sell_drop))
+    pct = float(sell_drop) * 100.0
+    return (
+        f"Holding: sell if at/under {_fmt_usd(trigger)} "
+        f"(-{pct:g}% from high {_fmt_usd(peak)}); now {_fmt_usd(price)}"
+    )
+
+
 def _humanize_signal_reason(
     signal: str | None,
     *,
@@ -74,6 +92,11 @@ def _humanize_signal_reason(
     trough_before: float | None,
     peak_before: float | None,
     fallback: str,
+    shares: float = 0.0,
+    buy_rise: float | None = None,
+    sell_drop: float | None = None,
+    trough_now: float | None = None,
+    peak_now: float | None = None,
 ) -> str:
     if signal == "BUY" and trough_before is not None:
         return (
@@ -85,6 +108,11 @@ def _humanize_signal_reason(
             f"Sell signal: price {_fmt_usd(price)} dropped from recent high "
             f"{_fmt_usd(peak_before)}"
         )
+    if signal is None and fallback == "No signal":
+        if shares <= 0 and trough_now is not None and buy_rise is not None:
+            return _waiting_buy_reason(price=price, trough=trough_now, buy_rise=buy_rise)
+        if shares > 0 and peak_now is not None and sell_drop is not None:
+            return _waiting_sell_reason(price=price, peak=peak_now, sell_drop=sell_drop)
     return fallback
 
 
@@ -254,6 +282,11 @@ def run_live_once(
             trough_before=trough_before,
             peak_before=peak_before,
             fallback=signal_reason,
+            shares=before.shares,
+            buy_rise=asset.buy_rise_pct / 100.0,
+            sell_drop=asset.sell_drop_pct / 100.0,
+            trough_now=None if probe.trough is None else float(probe.trough),
+            peak_now=None if probe.peak is None else float(probe.peak),
         )
         flags = active_flags.get(symbol)
         gate_reason = None
@@ -469,6 +502,7 @@ def run_live_once(
 
     if config.use_account_cash:
         # Book capital tracks full account equity; idle cash is split across flat sleeves.
+        # Long sleeves keep cash at 0 so the dashboard does not show stale "half cash".
         equity = float(getattr(end_snapshot, "equity_usd", 0.0) or 0.0)
         if equity > 0:
             config.total_cash = equity
@@ -477,20 +511,20 @@ def run_live_once(
             0.0,
             float(getattr(end_snapshot, "available_funds_usd", 0.0) or end_snapshot.spendable_usd or 0.0),
         )
-        flat_syms = [
-            sym
-            for sym in config.symbols
-            if float((assets.get(sym) or {}).get("shares") or 0.0) <= 0
-            and not (active_flags.get(sym) and active_flags[sym].exit_only)
-        ]
+        flat_syms: list[str] = []
+        for sym in config.symbols:
+            row = assets.setdefault(
+                sym,
+                {"cash": 0.0, "shares": 0.0, "peak": None, "trough": None, "last_price": None},
+            )
+            if float(row.get("shares") or 0.0) > 0:
+                row["cash"] = 0.0
+            elif not (active_flags.get(sym) and active_flags[sym].exit_only):
+                flat_syms.append(sym)
         if flat_syms and avail > 0:
             each = avail / float(len(flat_syms))
             for sym in flat_syms:
-                row = assets.setdefault(
-                    sym,
-                    {"cash": 0.0, "shares": 0.0, "peak": None, "trough": None, "last_price": None},
-                )
-                row["cash"] = each
+                assets[sym]["cash"] = each
 
     raw["assets"] = assets
     _save_state(paths.state_path, raw)

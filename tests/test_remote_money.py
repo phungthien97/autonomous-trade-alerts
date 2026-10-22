@@ -60,7 +60,7 @@ def test_position_rows_weights_and_cues() -> None:
     assert by_sym["AAPL"]["value"] == 200.0
     assert by_sym["AAPL"]["weight_pct"] == 20.0
     assert by_sym["AAPL"]["to_sell_pct"] is not None
-    assert by_sym["AAPL"]["flag"] == "active"
+    assert by_sym["AAPL"]["flag"] == "in stock"
     assert by_sym["MSFT"]["value"] == 800.0
     assert by_sym["MSFT"]["to_buy_pct"] is not None
     assert by_sym["MSFT"]["flag"] == "awaiting buy"
@@ -221,3 +221,32 @@ def test_book_status_line_flat() -> None:
         picker_active=[{"symbol": "P", "awaiting_first_buy": True}],
     )
     assert "flat" in line and "SMA" in line
+
+
+def test_account_mode_ignores_stale_long_sleeve_cash() -> None:
+    snap = live_money_snapshot(
+        positions=[
+            {"symbol": "AMGN", "shares": 500.0, "cash": 220000.0, "last_price": 440.0, "peak": 450.0},
+            {"symbol": "P", "shares": 0.0, "cash": 250000.0, "last_price": 120.0, "trough": 118.0},
+        ],
+        total_cash=1_000_000.0,
+        symbols=["AMGN", "P"],
+        picker_active=[
+            {"symbol": "AMGN", "buy_rise": 0.01, "sell_drop": 0.02, "awaiting_first_buy": False},
+            {"symbol": "P", "buy_rise": 0.01, "sell_drop": 0.05, "awaiting_first_buy": True},
+        ],
+        use_account_cash=True,
+        broker_cash=400_000.0,
+        broker_equity=1_000_000.0,
+        cycle_reasons={"P": "Waiting: need $119.18 (+1% from low $118.00); now $120.00"},
+    )
+    assert snap["invested"] == 220_000.0
+    assert snap["cash"] == 400_000.0
+    assert snap["nav"] == 1_000_000.0
+    by_sym = {r["symbol"]: r for r in snap["holdings"]}
+    assert by_sym["AMGN"]["sleeve_cash"] == 0.0
+    assert by_sym["AMGN"]["stock_value"] == 220_000.0
+    assert by_sym["AMGN"]["flag"] == "in stock"
+    assert by_sym["P"]["buy_budget"] == 400_000.0
+    assert by_sym["P"]["reason"].startswith("Waiting:")
+    assert by_sym["P"]["flag"] == "awaiting buy"

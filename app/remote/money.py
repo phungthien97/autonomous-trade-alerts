@@ -267,23 +267,35 @@ def position_rows(
     *,
     nav: float | None = None,
     picker_active: list[dict[str, Any]] | None = None,
+    use_account_cash: bool = False,
+    available_cash: float | None = None,
+    cycle_reasons: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Enrich positions with mkt_value, weight_pct, and buy/sell distance cues."""
     flags = {str(row.get("symbol")): row for row in (picker_active or []) if row.get("symbol")}
+    reasons = {str(k): str(v) for k, v in (cycle_reasons or {}).items() if v}
     total = float(nav) if nav and nav > 0 else book_nav(positions)
+    flat_n = sum(1 for row in (positions or []) if float(row.get("shares") or 0.0) <= 0)
+    buy_budget = None
+    if use_account_cash and available_cash is not None and flat_n > 0:
+        buy_budget = max(0.0, float(available_cash)) / float(flat_n)
 
     out: list[dict[str, Any]] = []
     for row in positions or []:
         sym = str(row.get("symbol") or "")
         shares = float(row.get("shares") or 0.0)
         cash = float(row.get("cash") or 0.0)
+        # Whole-account mode: long sleeves do not own idle cash; ignore stale sleeve cash.
+        if use_account_cash and shares > 0:
+            cash = 0.0
         px = row.get("last_price")
         if px is None:
             px = row.get("price")
         price = float(px) if isinstance(px, (int, float)) else None
         mkt_value = (shares * price) if price is not None and shares else 0.0
         sleeve_value = mkt_value + cash
-        weight = (sleeve_value / total * 100.0) if total > 0 else None
+        weight_base = mkt_value if use_account_cash else sleeve_value
+        weight = (weight_base / total * 100.0) if total > 0 and weight_base else None
 
         flag = flags.get(sym)
         to_sell = None
@@ -298,23 +310,32 @@ def position_rows(
             if shares <= 0 and isinstance(trough, (int, float)) and buy_rise is not None:
                 to_buy = distance_to_buy_pct(price, float(trough), float(buy_rise))
 
+        state = "in stock" if shares > 0 else "flat"
+        flag_label = _picker_flag_label(flag)
+        if flag_label == "exit only":
+            state = "exit only"
+        elif shares <= 0 and flag_label == "awaiting buy":
+            state = "awaiting buy"
+
         out.append(
             {
                 "symbol": sym,
                 "shares": shares,
                 "price": price,
                 "cash": round(cash, 2),
-                "value": round(sleeve_value, 2),
+                "value": round(sleeve_value if not use_account_cash else mkt_value, 2),
                 "mkt_value": round(mkt_value, 2),
                 "stock_value": round(mkt_value, 2),
                 "sleeve_cash": round(cash, 2),
                 "sleeve_total": round(sleeve_value, 2),
+                "buy_budget": round(buy_budget, 2) if buy_budget is not None and shares <= 0 else None,
                 "weight_pct": round(weight, 1) if weight is not None else None,
                 "to_sell_pct": round(to_sell, 1) if to_sell is not None else None,
                 "to_buy_pct": round(to_buy, 1) if to_buy is not None else None,
                 "peak": peak,
                 "trough": trough,
-                "flag": _picker_flag_label(flag),
+                "flag": state,
+                "reason": reasons.get(sym) or "",
                 "last_action": row.get("last_action"),
             }
         )
@@ -396,6 +417,10 @@ def live_money_snapshot(
     equity_path: Path | None = None,
     symbols: list[str] | None = None,
     picker_active: list[dict[str, Any]] | None = None,
+    use_account_cash: bool = False,
+    broker_cash: float | None = None,
+    broker_equity: float | None = None,
+    cycle_reasons: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Assemble Live-tab money hero + holdings from files (and optional equity.csv)."""
     start = float(total_cash) if total_cash is not None else None
@@ -404,8 +429,26 @@ def live_money_snapshot(
         symbols=symbols,
         picker_active=picker_active,
     )
-    cash, invested = cash_and_invested(book_positions)
-    nav = book_nav(book_positions, total_cash=start)
+    if use_account_cash:
+        # Ignore stale per-sleeve cash on longs; prefer broker cash/equity.
+        invested = 0.0
+        for row in book_positions:
+            shares = float(row.get("shares") or 0.0)
+            px = row.get("last_price")
+            if px is None:
+                px = row.get("price")
+            if shares > 0 and isinstance(px, (int, float)):
+                invested += shares * float(px)
+        cash = float(broker_cash) if broker_cash is not None else max(0.0, float(start or 0.0) - invested)
+        if broker_equity is not None and float(broker_equity) > 0:
+            nav = float(broker_equity)
+        elif start is not None and start > 0:
+            nav = float(start)
+        else:
+            nav = invested + cash
+    else:
+        cash, invested = cash_and_invested(book_positions)
+        nav = book_nav(book_positions, total_cash=start)
 
     equity = from_equity_csv(equity_path) if equity_path else from_equity_csv(Path("__missing__"))
     # Prefer live MTM nav; use equity.csv nav only as fallback when flat files empty
@@ -418,7 +461,7 @@ def live_money_snapshot(
     # under-allocated sleeve cash or from equity.csv B&H marks.
     if invested <= 0:
         bot_return_pct = 0.0
-        if start is not None and start > 0 and cash + 0.01 < start:
+        if not use_account_cash and start is not None and start > 0 and cash + 0.01 < start:
             # Unassigned leftover after whole-share sizing — still part of the book.
             nav = float(start)
             cash = float(start)
@@ -458,7 +501,14 @@ def live_money_snapshot(
         if day_delta is not None and nav > 0 and day_delta_pct is None:
             day_delta_pct = (day_delta / nav) * 100.0
 
-    holdings = position_rows(book_positions, nav=nav, picker_active=picker_active)
+    holdings = position_rows(
+        book_positions,
+        nav=nav,
+        picker_active=picker_active,
+        use_account_cash=use_account_cash,
+        available_cash=cash if use_account_cash else None,
+        cycle_reasons=cycle_reasons,
+    )
     return {
         "nav": nav,
         "cash": cash,
@@ -470,6 +520,7 @@ def live_money_snapshot(
         "edge": edge,
         "holdings": holdings,
         "starting_cash": start,
+        "use_account_cash": use_account_cash,
         "status_line": book_status_line(book_positions, picker_active=picker_active),
         "orphan_dropped": max(0, len(positions or []) - len(book_positions)),
     }
