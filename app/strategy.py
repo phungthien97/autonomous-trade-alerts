@@ -31,7 +31,9 @@ def step_signal(
     sell_drop: float,
 ) -> tuple[Optional[str], str]:
     if state.shares > 0:
-        state.peak = max(float(state.peak), price)
+        # Broker reconcile can restore shares while peak is still null.
+        peak = float(state.peak) if state.peak is not None else float(price)
+        state.peak = max(peak, price)
         if price <= float(state.peak) * (1 - sell_drop):
             state.cash = state.shares * price
             state.shares = 0.0

@@ -24,6 +24,13 @@ def _signal_count(prices: np.ndarray, buy_rise: float, sell_drop: float) -> int:
     return count
 
 
+def test_step_signal_long_with_missing_peak_seeds_peak() -> None:
+    state = StrategyState(cash=0.0, shares=1.0, peak=None, trough=None)
+    action, reason = step_signal(state, 100.0, buy_rise=0.02, sell_drop=0.50)
+    assert action is None
+    assert state.peak == 100.0
+
+
 def test_step_signal_sell_on_drop_from_peak() -> None:
     state = StrategyState(cash=0.0, shares=10.0, peak=100.0, trough=None)
     action, reason = step_signal(state, 97.0, buy_rise=0.02, sell_drop=0.02)
