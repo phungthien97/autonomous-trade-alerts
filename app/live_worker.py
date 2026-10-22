@@ -695,6 +695,8 @@ def main(argv: list[str] | None = None) -> int:
                 "actions": summary.get("actions", []),
                 "decisions": summary.get("decisions", []),
                 "skipped": summary.get("skipped"),
+                "use_account_cash": summary.get("use_account_cash"),
+                "book_equity": summary.get("book_equity"),
             },
         )
     finally:
