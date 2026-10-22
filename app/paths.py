@@ -80,6 +80,11 @@ class LivePaths:
         return self.state_dir / "equity.csv"
 
     @property
+    def account_nav_path(self) -> Path:
+        """Daily account equity (NetLiquidation) for performance charts."""
+        return self.state_dir / "account_nav.csv"
+
+    @property
     def audit_dir(self) -> Path:
         return self.state_dir / "audit"
 

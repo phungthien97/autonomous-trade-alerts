@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.live.account_nav import load_daily_nav
 from app.live.control import ack_risk, disable_trading, enable_trading
 from app.paths import LivePaths, PickerPaths, ROOT
 from app.remote.health import build_health_strip
@@ -415,6 +416,57 @@ def _render_edge_strip(st: Any, edge: dict[str, Any], bot_return_pct: float | No
         st.caption(f"Bot {_fmt_pct(bot_return_pct)} · {reason}")
 
 
+def _render_performance_chart(st: Any, nav_path: Path) -> None:
+    """Day-to-day account equity under the positions table."""
+    st.subheader("Performance")
+    points = load_daily_nav(nav_path)
+    if not points:
+        st.caption("Day-to-day equity chart appears after the worker logs account value.")
+        return
+    first = points[0]
+    last = points[-1]
+    since = None
+    if first["equity"] and first["equity"] > 0:
+        since = ((float(last["equity"]) - float(first["equity"])) / float(first["equity"])) * 100.0
+    bits = [
+        f"{len(points)} day(s)",
+        f"{first['date']} → {last['date']}",
+        f"latest {_fmt_money(last['equity'])}",
+    ]
+    if since is not None and len(points) >= 2:
+        bits.append(f"since first log {_fmt_pct(since)}")
+    st.caption(" · ".join(bits) + " · one point per Eastern calendar day (IBKR account equity)")
+
+    if len(points) == 1:
+        st.info(f"Logged {_fmt_money(points[0]['equity'])} on {points[0]['date']}. Chart needs 2+ days.")
+        return
+
+    try:
+        import pandas as pd
+    except ImportError:
+        st.caption("pandas required for chart")
+        return
+
+    frame = pd.DataFrame(points)
+    chart = frame.set_index("date")[["equity"]].rename(columns={"equity": "Account equity"})
+    st.line_chart(chart, height=280)
+
+    recent = list(reversed(points[-14:]))
+    rows = []
+    for row in recent:
+        ch = row.get("day_change")
+        pct = row.get("day_change_pct")
+        rows.append(
+            {
+                "Date": row["date"],
+                "Equity": _fmt_money(row["equity"]),
+                "Day change": _fmt_money(ch) if ch is not None else "—",
+                "Day %": _fmt_pct(pct) if pct is not None else "—",
+            }
+        )
+    _show_table(st, rows, "No daily points yet.")
+
+
 def render_live_tab(st: Any, project_root: Path | None = None) -> None:
     root = project_root or ROOT
     live_paths = LivePaths(project_root=root)
@@ -495,6 +547,7 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
             st.caption(f"Last worker run · {when} · {action_txt}")
         elif not decisions:
             st.caption("No cycle decisions recorded yet.")
+        _render_performance_chart(st, live_paths.account_nav_path)
     else:
         st.subheader("Portfolio holdings")
         _show_table(
@@ -527,6 +580,7 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
             _show_table(st, rows, "No decisions this cycle.", wrap_cols=("Reason", "Plan"))
         else:
             st.caption("No cycle decisions recorded yet.")
+        _render_performance_chart(st, live_paths.account_nav_path)
 
     st.subheader("Controls")
     st.caption("Safe ops only — disable / enable trading and acknowledge risk incidents.")

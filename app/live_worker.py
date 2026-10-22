@@ -37,6 +37,7 @@ from app.picker.active import (
     save_active,
 )
 from app.picker.apply import maybe_apply_pending
+from app.live.account_nav import upsert_account_nav
 from app.picker.sizing import sleeve_buy_budget
 from app.picker.trend_gate import allow_first_buy, sma
 from app.risk.escalate import RiskController
@@ -529,6 +530,11 @@ def run_live_once(
     raw["assets"] = assets
     raw["available_funds_usd"] = avail
     _save_state(paths.state_path, raw)
+    equity_for_nav = float(getattr(end_snapshot, "equity_usd", 0.0) or 0.0)
+    if equity_for_nav <= 0 and config.use_account_cash:
+        equity_for_nav = float(config.total_cash or 0.0)
+    if equity_for_nav > 0:
+        upsert_account_nav(paths.account_nav_path, equity=equity_for_nav, at=now_utc)
     if active_dirty and active is not None:
         save_active(picker_paths.active_selection_path, active)
     return {
