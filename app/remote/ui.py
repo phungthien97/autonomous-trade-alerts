@@ -176,6 +176,7 @@ def _fmt_whole_shares(n: Any) -> str:
 def _account_next_plan(row: dict[str, Any]) -> str:
     """Dollar trigger + planned whole-share size for the next action."""
     shares = float(row.get("shares") or 0.0)
+    reason = str(row.get("reason") or "")
     if shares > 0:
         bits: list[str] = []
         if row.get("sell_trigger") is not None:
@@ -191,7 +192,9 @@ def _account_next_plan(row: dict[str, Any]) -> str:
             bits.append(_fmt_money(budget))
     elif budget is not None:
         bits.append(f"can't afford 1 sh ({_fmt_money(budget)})")
-    if row.get("buy_trigger") is not None:
+    if "20-hour average" in reason:
+        bits.append("after 20-hour average clears")
+    elif row.get("buy_trigger") is not None:
         bits.append(f"when ≥ {_fmt_money(row.get('buy_trigger'))}")
     return " · ".join(bits) if bits else "—"
 
@@ -341,7 +344,7 @@ def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -
         c1, c2, c3 = st.columns(3)
         c1.metric("Account total", _fmt_money(nav if nav is not None else book))
         c2.metric("In stocks", _fmt_money(invested))
-        c3.metric("Available cash", _fmt_money(cash))
+        c3.metric("Cash", _fmt_money(cash))
     else:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Book capital", _fmt_money(book))
@@ -349,23 +352,37 @@ def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -
         c3.metric("In cash", _fmt_money(cash))
         c4.metric("Book total", _fmt_money(nav))
 
-    r1, r2 = st.columns(2)
-    r1.metric("Since start", _fmt_pct(ret) if ret is not None else "—")
-    if day_delta is not None:
-        delta_label = _fmt_money(day_delta)
-        if day_pct is not None:
-            r2.metric("Day P&L", delta_label, delta=_fmt_pct(day_pct))
+    if use_account:
+        r1, r2 = st.columns(2)
+        spend = money.get("available_funds")
+        r1.metric("Can deploy now", _fmt_money(spend) if spend is not None else "—")
+        if day_delta is not None:
+            delta_label = _fmt_money(day_delta)
+            if day_pct is not None:
+                r2.metric("Day P&L", delta_label, delta=_fmt_pct(day_pct))
+            else:
+                r2.metric("Day P&L", delta_label)
         else:
-            r2.metric("Day P&L", delta_label)
+            r2.metric("Day P&L", "—")
     else:
-        r2.metric("Day P&L", "—")
+        r1, r2 = st.columns(2)
+        r1.metric("Since start", _fmt_pct(ret) if ret is not None else "—")
+        if day_delta is not None:
+            delta_label = _fmt_money(day_delta)
+            if day_pct is not None:
+                r2.metric("Day P&L", delta_label, delta=_fmt_pct(day_pct))
+            else:
+                r2.metric("Day P&L", delta_label)
+        else:
+            r2.metric("Day P&L", "—")
 
     bits: list[str] = []
     broker_cash = status.get("cash_usd")
     broker_eq = status.get("broker_equity_usd")
     if use_account:
-        bits.append("buys split available IBKR cash across flat names")
-        bits.append("paper account base currency may be CAD")
+        bits.append("account totals in IBKR base currency (often CAD)")
+        bits.append("position prices/values are USD")
+        bits.append("buy size uses Can deploy now ÷ flat names")
     elif isinstance(broker_cash, (int, float)) and book is not None:
         if abs(float(broker_cash) - float(book)) > 1:
             bits.append(f"IBKR paper account cash {_fmt_money(broker_cash)} (not bot book)")
@@ -439,6 +456,9 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
         broker_equity=status.get("broker_equity_usd")
         if isinstance(status.get("broker_equity_usd"), (int, float))
         else status.get("total_cash"),
+        available_funds=status.get("available_funds_usd")
+        if isinstance(status.get("available_funds_usd"), (int, float))
+        else None,
         cycle_reasons=cycle_reasons,
     )
     _render_money_hero(st, money, status)

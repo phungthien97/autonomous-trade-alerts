@@ -238,19 +238,22 @@ def test_account_mode_ignores_stale_long_sleeve_cash() -> None:
         use_account_cash=True,
         broker_cash=400_000.0,
         broker_equity=1_000_000.0,
+        available_funds=750_000.0,
         cycle_reasons={"P": "Waiting: need $119.18 (+1% from low $118.00); now $120.00"},
     )
-    assert snap["invested"] == 220_000.0
+    # Hero stays in one currency: stocks = equity − cash (not USD share marks).
+    assert snap["invested"] == 600_000.0
     assert snap["cash"] == 400_000.0
     assert snap["nav"] == 1_000_000.0
+    assert snap["available_funds"] == 750_000.0
     by_sym = {r["symbol"]: r for r in snap["holdings"]}
     assert by_sym["AMGN"]["sleeve_cash"] == 0.0
-    assert by_sym["AMGN"]["stock_value"] == 220_000.0
+    assert by_sym["AMGN"]["stock_value"] == 220_000.0  # row still USD marks
     assert by_sym["AMGN"]["flag"] == "in stock"
     assert by_sym["AMGN"]["peak"] == 450.0
     assert by_sym["AMGN"]["sell_trigger"] == 441.0  # 450 * (1 - 0.02)
-    assert by_sym["P"]["buy_budget"] == 400_000.0
-    assert by_sym["P"]["planned_shares"] == 3333  # floor(400000 / 120)
+    assert by_sym["P"]["buy_budget"] == 750_000.0  # deployable funds, not statement cash
+    assert by_sym["P"]["planned_shares"] == 6250  # floor(750000 / 120)
     assert by_sym["P"]["trough"] == 118.0
     assert by_sym["P"]["buy_trigger"] == 119.18
     assert by_sym["P"]["reason"].startswith("Waiting:")

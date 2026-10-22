@@ -57,6 +57,9 @@ def load_live_status(state_live_dir: Path) -> dict[str, Any]:
         "trading_enabled": trading_enabled,
         "incident": risk.get("open_incident"),
         "cash_usd": state.get("cash_usd"),
+        "available_funds_usd": state.get("available_funds_usd")
+        if state.get("available_funds_usd") is not None
+        else (last_cycle or {}).get("available_funds_usd"),
         "positions": _positions_from_assets(state.get("assets") or {}),
         "last_cycle": last_cycle,
         "total_cash": config.get("total_cash"),

@@ -433,6 +433,7 @@ def live_money_snapshot(
     use_account_cash: bool = False,
     broker_cash: float | None = None,
     broker_equity: float | None = None,
+    available_funds: float | None = None,
     cycle_reasons: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Assemble Live-tab money hero + holdings from files (and optional equity.csv)."""
@@ -442,23 +443,37 @@ def live_money_snapshot(
         symbols=symbols,
         picker_active=picker_active,
     )
+    spendable_for_buys: float | None = None
     if use_account_cash:
-        # Ignore stale per-sleeve cash on longs; prefer broker cash/equity.
-        invested = 0.0
-        for row in book_positions:
-            shares = float(row.get("shares") or 0.0)
-            px = row.get("last_price")
-            if px is None:
-                px = row.get("price")
-            if shares > 0 and isinstance(px, (int, float)):
-                invested += shares * float(px)
-        cash = float(broker_cash) if broker_cash is not None else max(0.0, float(start or 0.0) - invested)
+        # Paper IBKR may be CAD: keep hero in one currency (equity − cash = stocks).
+        # Do not sum USD share marks into a CAD NetLiquidation — that won't add up.
         if broker_equity is not None and float(broker_equity) > 0:
             nav = float(broker_equity)
         elif start is not None and start > 0:
             nav = float(start)
         else:
-            nav = invested + cash
+            nav = 0.0
+        cash = float(broker_cash) if broker_cash is not None else 0.0
+        if broker_cash is not None and nav > 0:
+            invested = max(0.0, nav - cash)
+        else:
+            invested = 0.0
+            for row in book_positions:
+                shares = float(row.get("shares") or 0.0)
+                px = row.get("last_price")
+                if px is None:
+                    px = row.get("price")
+                if shares > 0 and isinstance(px, (int, float)):
+                    invested += shares * float(px)
+            if nav <= 0:
+                nav = invested + cash
+        spendable_for_buys = (
+            float(available_funds)
+            if available_funds is not None
+            else float(broker_cash)
+            if broker_cash is not None
+            else None
+        )
     else:
         cash, invested = cash_and_invested(book_positions)
         nav = book_nav(book_positions, total_cash=start)
@@ -472,9 +487,13 @@ def live_money_snapshot(
     edge: dict[str, Any] = {"ok": False, "reason": "B&H when prices available"}
     # Flat book (no shares): no trading P&L yet — do not invent a loss from
     # under-allocated sleeve cash or from equity.csv B&H marks.
-    if invested <= 0:
+    if use_account_cash:
+        # Book capital tracks live equity — "since start" would always read ~0%.
+        bot_return_pct = None
+        edge = {"ok": False, "reason": "since-start return paused while book tracks live equity"}
+    elif invested <= 0:
         bot_return_pct = 0.0
-        if not use_account_cash and start is not None and start > 0 and cash + 0.01 < start:
+        if start is not None and start > 0 and cash + 0.01 < start:
             # Unassigned leftover after whole-share sizing — still part of the book.
             nav = float(start)
             cash = float(start)
@@ -483,7 +502,8 @@ def live_money_snapshot(
 
     syms = list(symbols or [])
     if (
-        invested > 0
+        not use_account_cash
+        and invested > 0
         and start
         and syms
         and equity.get("start_prices")
@@ -519,13 +539,14 @@ def live_money_snapshot(
         nav=nav,
         picker_active=picker_active,
         use_account_cash=use_account_cash,
-        available_cash=cash if use_account_cash else None,
+        available_cash=spendable_for_buys if use_account_cash else None,
         cycle_reasons=cycle_reasons,
     )
     return {
         "nav": nav,
         "cash": cash,
         "invested": invested,
+        "available_funds": spendable_for_buys,
         "book_capital": start,
         "bot_return_pct": bot_return_pct,
         "day_delta": day_delta,

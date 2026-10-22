@@ -500,6 +500,10 @@ def run_live_once(
         if active is not None and clear_exit_only_if_flat(active, symbol, float(shares)):
             active_dirty = True
 
+    avail = max(
+        0.0,
+        float(getattr(end_snapshot, "available_funds_usd", 0.0) or end_snapshot.spendable_usd or 0.0),
+    )
     if config.use_account_cash:
         # Book capital tracks full account equity; idle cash is split across flat sleeves.
         # Long sleeves keep cash at 0 so the dashboard does not show stale "half cash".
@@ -507,10 +511,6 @@ def run_live_once(
         if equity > 0:
             config.total_cash = equity
             save_live_config(paths.config_path, config)
-        avail = max(
-            0.0,
-            float(getattr(end_snapshot, "available_funds_usd", 0.0) or end_snapshot.spendable_usd or 0.0),
-        )
         flat_syms: list[str] = []
         for sym in config.symbols:
             row = assets.setdefault(
@@ -527,6 +527,7 @@ def run_live_once(
                 assets[sym]["cash"] = each
 
     raw["assets"] = assets
+    raw["available_funds_usd"] = avail
     _save_state(paths.state_path, raw)
     if active_dirty and active is not None:
         save_active(picker_paths.active_selection_path, active)
@@ -536,6 +537,7 @@ def run_live_once(
         "decisions": decisions,
         "rth_ok": rth_ok,
         "cash_usd": raw.get("cash_usd"),
+        "available_funds_usd": avail,
         "trading_enabled": True,
         "use_account_cash": config.use_account_cash,
         "book_equity": config.total_cash if config.use_account_cash else None,
@@ -726,6 +728,7 @@ def main(argv: list[str] | None = None) -> int:
                 "price_source": price_source,
                 "rth_ok": summary.get("rth_ok"),
                 "cash_usd": summary.get("cash_usd"),
+                "available_funds_usd": summary.get("available_funds_usd"),
                 "actions": summary.get("actions", []),
                 "decisions": summary.get("decisions", []),
                 "skipped": summary.get("skipped"),
