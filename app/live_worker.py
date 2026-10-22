@@ -281,11 +281,14 @@ def run_live_once(
 
         buy_cap = None
         if signal == "BUY":
-            # Cap to configured book (paper often has $1M IBKR cash; live ~$1k).
-            book = min(float(snapshot.spendable_usd), float(config.total_cash))
-            equal_cap = sleeve_buy_budget(book, n_active, n_long)
-            # Prefer picker priority sleeve cash when larger (expensive top names).
-            buy_cap = max(float(before.cash), equal_cap)
+            # Never size off IBKR paper's ~$1M — only this sleeve's assigned cash.
+            # (Equal re-split of full total_cash after some sleeves are long was
+            # double-counting the book and blew up P to 11 shares.)
+            sleeve_cash = max(0.0, float(before.cash))
+            buy_cap = sleeve_cash if sleeve_cash > 0 else None
+            if buy_cap is None:
+                book = min(float(snapshot.spendable_usd), float(config.total_cash))
+                buy_cap = sleeve_buy_budget(book, n_active, n_long)
 
         intent, plan_why = plan_from_signal(
             symbol,

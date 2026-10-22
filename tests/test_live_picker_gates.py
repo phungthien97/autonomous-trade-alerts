@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 from app.audit.log import AuditLog
@@ -157,6 +158,73 @@ def test_zero_quantity_reason_explains_cash(tmp_path, monkeypatch) -> None:
     assert d0["plan"] == "can't afford 1 share"
     assert "can't buy 1 share" in d0["signal_reason"]
     assert "$800.00" in d0["signal_reason"]
+
+
+def test_buy_uses_sleeve_cash_not_broker_million(tmp_path, monkeypatch) -> None:
+    """Sleeve cash ~$520 must not buy 11 shares just because IBKR paper is rich."""
+    paths = _setup(tmp_path, monkeypatch)
+    save_live_config(
+        paths.config_path,
+        LiveConfig(
+            mode=TradingMode.live,
+            symbols=["P", "FICO"],
+            total_cash=3000.0,
+            assets=[
+                SymbolParams("P", buy_rise_pct=1.0, sell_drop_pct=50.0),
+                SymbolParams("FICO", buy_rise_pct=1.0, sell_drop_pct=50.0),
+            ],
+            allow_fractional_default=False,
+        ),
+    )
+    picker = PickerPaths(project_root=tmp_path)
+    save_active(
+        picker.active_selection_path,
+        ActiveSelection(
+            applied_at="t",
+            run_id="r",
+            symbols=[
+                ActiveSymbol("P", 0.01, 0.5, awaiting_first_buy=False),
+                ActiveSymbol("FICO", 0.01, 0.5, awaiting_first_buy=False),
+            ],
+        ),
+    )
+    paths.state_path.write_text(
+        json.dumps(
+            {
+                "assets": {
+                    "P": {"cash": 520.0, "shares": 0.0, "peak": None, "trough": 100.0},
+                    "FICO": {"cash": 0.0, "shares": 1.0, "peak": 800.0, "trough": None},
+                },
+                "cash_usd": 1_000_000.0,
+                "orders_today": 0,
+                "reject_streak": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    broker = InMemoryBroker(
+        1_000_000.0,
+        positions={"FICO": 1.0},
+        last_prices={"P": 130.0, "FICO": 800.0},
+        fractional=False,
+    )
+    risk = RiskController(paths.risk_path)
+    audit = AuditLog(paths.audit_log_path)
+    # Wednesday 15:00 UTC = 11:00 ET — inside regular session
+    t1 = datetime(2026, 10, 21, 15, 0, tzinfo=timezone.utc)
+    run_live_once(
+        paths,
+        broker,
+        risk,
+        audit,
+        t1,
+        {"P": 130.0, "FICO": 800.0},
+        {"P": "b1", "FICO": "b2"},
+    )
+    p_shares = float(broker.get_positions().get("P", 0) or 0)
+    # $520 / $130 = 4 whole shares max — never ~11 from equal re-split of $3000.
+    assert p_shares <= 4.0 + 1e-9
+    assert p_shares >= 1.0
 
 
 def test_latest_prices_forwards_close_series() -> None:
