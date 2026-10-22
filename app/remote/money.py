@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 from datetime import datetime
+from math import floor
 from pathlib import Path
 from typing import Any
 
@@ -321,6 +322,11 @@ def position_rows(
         elif shares <= 0 and flag_label == "awaiting buy":
             state = "awaiting buy"
 
+        planned_shares = None
+        sleeve_budget = round(buy_budget, 2) if buy_budget is not None and shares <= 0 else None
+        if sleeve_budget is not None and price is not None and price > 0:
+            planned_shares = int(floor(sleeve_budget / float(price)))
+
         out.append(
             {
                 "symbol": sym,
@@ -332,7 +338,8 @@ def position_rows(
                 "stock_value": round(mkt_value, 2),
                 "sleeve_cash": round(cash, 2),
                 "sleeve_total": round(sleeve_value, 2),
-                "buy_budget": round(buy_budget, 2) if buy_budget is not None and shares <= 0 else None,
+                "buy_budget": sleeve_budget,
+                "planned_shares": planned_shares,
                 "weight_pct": round(weight, 1) if weight is not None else None,
                 "to_sell_pct": round(to_sell, 1) if to_sell is not None else None,
                 "to_buy_pct": round(to_buy, 1) if to_buy is not None else None,

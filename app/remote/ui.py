@@ -166,17 +166,40 @@ def _fmt_shares(value: Any) -> str:
     return f"{num:.4f}".rstrip("0").rstrip(".")
 
 
+def _fmt_whole_shares(n: Any) -> str:
+    try:
+        return f"{int(n):,}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _account_next_plan(row: dict[str, Any]) -> str:
+    """Dollar trigger + planned whole-share size for the next action."""
+    shares = float(row.get("shares") or 0.0)
+    if shares > 0:
+        bits: list[str] = []
+        if row.get("sell_trigger") is not None:
+            bits.append(f"Sell at {_fmt_money(row.get('sell_trigger'))}")
+        bits.append(f"all {_fmt_whole_shares(shares)} sh")
+        return " · ".join(bits)
+    planned = row.get("planned_shares")
+    budget = row.get("buy_budget")
+    bits = []
+    if isinstance(planned, int) and planned > 0:
+        bits.append(f"Buy ~{_fmt_whole_shares(planned)} sh")
+        if budget is not None:
+            bits.append(_fmt_money(budget))
+    elif budget is not None:
+        bits.append(f"can't afford 1 sh ({_fmt_money(budget)})")
+    if row.get("buy_trigger") is not None:
+        bits.append(f"when ≥ {_fmt_money(row.get('buy_trigger'))}")
+    return " · ".join(bits) if bits else "—"
+
+
 def _account_holdings_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One easy table for whole-account mode: position + levels + why."""
     out: list[dict[str, Any]] = []
     for row in rows:
-        shares = float(row.get("shares") or 0.0)
-        if shares > 0 and row.get("sell_trigger") is not None:
-            next_level = f"Sell at {_fmt_money(row.get('sell_trigger'))}"
-        elif shares <= 0 and row.get("buy_trigger") is not None:
-            next_level = f"Buy at {_fmt_money(row.get('buy_trigger'))}"
-        else:
-            next_level = "—"
         out.append(
             {
                 "Symbol": row.get("symbol") or "—",
@@ -187,7 +210,7 @@ def _account_holdings_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 ),
                 "Low": _fmt_money(row.get("trough")) if row.get("trough") is not None else "—",
                 "High": _fmt_money(row.get("peak")) if row.get("peak") is not None else "—",
-                "Next": next_level,
+                "Next buy/sell": _account_next_plan(row),
                 "Why": str(row.get("reason") or "—"),
             }
         )
@@ -432,16 +455,10 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
     if use_account:
         st.subheader("Positions")
         st.caption(
-            "Low = recent trough (buy from here) · High = recent peak (sell from here) · "
-            "Next = dollar level the strategy is watching"
+            "Low / High = recent trough & peak · "
+            "Next buy/sell ≈ whole shares from splitting available cash across flat names "
+            "(size shrinks if another name buys first)"
         )
-        budgets = [
-            r.get("buy_budget")
-            for r in (money.get("holdings") or [])
-            if isinstance(r, dict) and r.get("buy_budget") is not None
-        ]
-        if budgets:
-            st.caption(f"Next buy for each flat name can use about {_fmt_money(budgets[0])} of available cash")
         _show_table(
             st,
             _holdings_table(
@@ -450,7 +467,7 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
                 use_account_cash=True,
             ),
             "No active sleeves in the book.",
-            wrap_cols=("Why",),
+            wrap_cols=("Why", "Next buy/sell"),
         )
         actions = last.get("actions") if isinstance(last, dict) else None
         action_txt = ", ".join(str(a) for a in actions) if actions else "no orders"
