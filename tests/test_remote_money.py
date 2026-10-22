@@ -247,6 +247,10 @@ def test_account_mode_ignores_stale_long_sleeve_cash() -> None:
     assert by_sym["AMGN"]["sleeve_cash"] == 0.0
     assert by_sym["AMGN"]["stock_value"] == 220_000.0
     assert by_sym["AMGN"]["flag"] == "in stock"
+    assert by_sym["AMGN"]["peak"] == 450.0
+    assert by_sym["AMGN"]["sell_trigger"] == 441.0  # 450 * (1 - 0.02)
     assert by_sym["P"]["buy_budget"] == 400_000.0
+    assert by_sym["P"]["trough"] == 118.0
+    assert by_sym["P"]["buy_trigger"] == 119.18
     assert by_sym["P"]["reason"].startswith("Waiting:")
     assert by_sym["P"]["flag"] == "awaiting buy"

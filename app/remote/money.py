@@ -300,14 +300,18 @@ def position_rows(
         flag = flags.get(sym)
         to_sell = None
         to_buy = None
+        buy_trigger = None
+        sell_trigger = None
         peak = row.get("peak")
         trough = row.get("trough")
+        sell_drop = flag.get("sell_drop") if flag else None
+        buy_rise = flag.get("buy_rise") if flag else None
         if flag and price is not None:
-            sell_drop = flag.get("sell_drop")
-            buy_rise = flag.get("buy_rise")
             if shares > 0 and isinstance(peak, (int, float)) and sell_drop is not None:
+                sell_trigger = float(peak) * (1.0 - float(sell_drop))
                 to_sell = distance_to_sell_pct(price, float(peak), float(sell_drop))
             if shares <= 0 and isinstance(trough, (int, float)) and buy_rise is not None:
+                buy_trigger = float(trough) * (1.0 + float(buy_rise))
                 to_buy = distance_to_buy_pct(price, float(trough), float(buy_rise))
 
         state = "in stock" if shares > 0 else "flat"
@@ -332,8 +336,10 @@ def position_rows(
                 "weight_pct": round(weight, 1) if weight is not None else None,
                 "to_sell_pct": round(to_sell, 1) if to_sell is not None else None,
                 "to_buy_pct": round(to_buy, 1) if to_buy is not None else None,
-                "peak": peak,
-                "trough": trough,
+                "buy_trigger": round(buy_trigger, 2) if buy_trigger is not None else None,
+                "sell_trigger": round(sell_trigger, 2) if sell_trigger is not None else None,
+                "peak": float(peak) if isinstance(peak, (int, float)) else None,
+                "trough": float(trough) if isinstance(trough, (int, float)) else None,
                 "flag": state,
                 "reason": reasons.get(sym) or "",
                 "last_action": row.get("last_action"),

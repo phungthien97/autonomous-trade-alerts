@@ -166,6 +166,34 @@ def _fmt_shares(value: Any) -> str:
     return f"{num:.4f}".rstrip("0").rstrip(".")
 
 
+def _account_holdings_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One easy table for whole-account mode: position + levels + why."""
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        shares = float(row.get("shares") or 0.0)
+        if shares > 0 and row.get("sell_trigger") is not None:
+            next_level = f"Sell at {_fmt_money(row.get('sell_trigger'))}"
+        elif shares <= 0 and row.get("buy_trigger") is not None:
+            next_level = f"Buy at {_fmt_money(row.get('buy_trigger'))}"
+        else:
+            next_level = "—"
+        out.append(
+            {
+                "Symbol": row.get("symbol") or "—",
+                "Shares": _fmt_shares(row.get("shares")),
+                "Price": _fmt_money(row.get("price")),
+                "Value": _fmt_money(
+                    row.get("stock_value") if row.get("stock_value") is not None else row.get("mkt_value")
+                ),
+                "Low": _fmt_money(row.get("trough")) if row.get("trough") is not None else "—",
+                "High": _fmt_money(row.get("peak")) if row.get("peak") is not None else "—",
+                "Next": next_level,
+                "Why": str(row.get("reason") or "—"),
+            }
+        )
+    return out
+
+
 def _holdings_table(
     rows: list[dict[str, Any]],
     *,
@@ -173,29 +201,11 @@ def _holdings_table(
     use_account_cash: bool = False,
 ) -> list[dict[str, Any]]:
     """Title-case holdings rows. Account mode hides misleading sleeve cash."""
+    if live_book and use_account_cash:
+        return _account_holdings_table(rows)
     out: list[dict[str, Any]] = []
     for row in rows:
-        if live_book and use_account_cash:
-            item: dict[str, Any] = {
-                "Symbol": row.get("symbol") or "—",
-                "Shares": _fmt_shares(row.get("shares")),
-                "Price": _fmt_money(row.get("price")),
-                "Stock value": _fmt_money(
-                    row.get("stock_value") if row.get("stock_value") is not None else row.get("mkt_value")
-                ),
-                "Weight": _fmt_pct(row.get("weight_pct"), signed=False)
-                if row.get("weight_pct") is not None
-                else "—",
-                "Status": str(row.get("flag") or "—"),
-            }
-            if row.get("buy_budget") is not None:
-                item["Buy budget"] = _fmt_money(row.get("buy_budget"))
-            if row.get("to_sell_pct") is not None:
-                item["To sell"] = _fmt_pct(row.get("to_sell_pct"))
-            if row.get("to_buy_pct") is not None:
-                item["To buy"] = _fmt_pct(row.get("to_buy_pct"))
-            item["Waiting"] = str(row.get("reason") or "—")
-        elif live_book:
+        if live_book:
             item = {
                 "Symbol": row.get("symbol") or "—",
                 "Shares": _fmt_shares(row.get("shares")),
@@ -410,44 +420,76 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
     )
     _render_money_hero(st, money, status)
     _render_edge_strip(st, money.get("edge") or {}, money.get("bot_return_pct"))
-    _show_table(
-        st,
-        _holdings_table(
-            money.get("holdings") or [],
-            live_book=True,
-            use_account_cash=use_account,
-        ),
-        "No active sleeves in the book.",
-        wrap_cols=("Waiting",) if use_account else (),
-    )
 
     last = status.get("last_cycle") or {}
     decisions = last.get("decisions") if isinstance(last, dict) else None
-    st.subheader("Last cycle")
+    when = None
     if isinstance(last, dict):
         when = last.get("at_eastern") or (
             _fmt_eastern(str(last["at_utc"])) if last.get("at_utc") else None
         )
+
+    if use_account:
+        st.subheader("Positions")
+        st.caption(
+            "Low = recent trough (buy from here) · High = recent peak (sell from here) · "
+            "Next = dollar level the strategy is watching"
+        )
+        budgets = [
+            r.get("buy_budget")
+            for r in (money.get("holdings") or [])
+            if isinstance(r, dict) and r.get("buy_budget") is not None
+        ]
+        if budgets:
+            st.caption(f"Next buy for each flat name can use about {_fmt_money(budgets[0])} of available cash")
+        _show_table(
+            st,
+            _holdings_table(
+                money.get("holdings") or [],
+                live_book=True,
+                use_account_cash=True,
+            ),
+            "No active sleeves in the book.",
+            wrap_cols=("Why",),
+        )
+        actions = last.get("actions") if isinstance(last, dict) else None
+        action_txt = ", ".join(str(a) for a in actions) if actions else "no orders"
+        if when:
+            st.caption(f"Last worker run · {when} · {action_txt}")
+        elif not decisions:
+            st.caption("No cycle decisions recorded yet.")
+    else:
+        st.subheader("Portfolio holdings")
+        _show_table(
+            st,
+            _holdings_table(
+                money.get("holdings") or [],
+                live_book=True,
+                use_account_cash=False,
+            ),
+            "No active sleeves in the book.",
+        )
+        st.subheader("Last cycle")
         if when:
             st.caption(f"Worker ran · {when}")
-    if isinstance(decisions, list) and decisions:
-        rows = []
-        for d in decisions:
-            if not isinstance(d, dict):
-                continue
-            reason = d.get("signal_reason") or ""
-            rows.append(
-                {
-                    "Symbol": d.get("symbol") or "—",
-                    "Signal": d.get("signal") or "—",
-                    "Plan": d.get("plan") or "—",
-                    "Action": d.get("action") or "—",
-                    "Reason": reason or "—",
-                }
-            )
-        _show_table(st, rows, "No decisions this cycle.", wrap_cols=("Reason", "Plan"))
-    else:
-        st.caption("No cycle decisions recorded yet.")
+        if isinstance(decisions, list) and decisions:
+            rows = []
+            for d in decisions:
+                if not isinstance(d, dict):
+                    continue
+                reason = d.get("signal_reason") or ""
+                rows.append(
+                    {
+                        "Symbol": d.get("symbol") or "—",
+                        "Signal": d.get("signal") or "—",
+                        "Plan": d.get("plan") or "—",
+                        "Action": d.get("action") or "—",
+                        "Reason": reason or "—",
+                    }
+                )
+            _show_table(st, rows, "No decisions this cycle.", wrap_cols=("Reason", "Plan"))
+        else:
+            st.caption("No cycle decisions recorded yet.")
 
     st.subheader("Controls")
     st.caption("Safe ops only — disable / enable trading and acknowledge risk incidents.")
