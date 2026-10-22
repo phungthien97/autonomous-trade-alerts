@@ -60,6 +60,7 @@ def load_live_status(state_live_dir: Path) -> dict[str, Any]:
         "positions": _positions_from_assets(state.get("assets") or {}),
         "last_cycle": last_cycle,
         "total_cash": config.get("total_cash"),
+        "use_account_cash": bool(config.get("use_account_cash", True)),
     }
 
 

@@ -20,7 +20,7 @@ from app.audit.log import AuditLog
 from app.broker.memory import InMemoryBroker
 from app.fees import default_ibkr_us_stock_schedule
 from app.broker.gateway import BrokerGateway
-from app.live.config import bootstrap_live_state, load_live_config
+from app.live.config import bootstrap_live_state, load_live_config, save_live_config
 from app.live.executor import execute_intent
 from app.notifier import clear_alert_cooldown, notify_live_event
 from app.live.idempotency import IdempotencyStore
@@ -281,14 +281,19 @@ def run_live_once(
 
         buy_cap = None
         if signal == "BUY":
-            # Never size off IBKR paper's ~$1M — only this sleeve's assigned cash.
-            # (Equal re-split of full total_cash after some sleeves are long was
-            # double-counting the book and blew up P to 11 shares.)
-            sleeve_cash = max(0.0, float(before.cash))
-            buy_cap = sleeve_cash if sleeve_cash > 0 else None
-            if buy_cap is None:
-                book = min(float(snapshot.spendable_usd), float(config.total_cash))
-                buy_cap = sleeve_buy_budget(book, n_active, n_long)
+            if config.use_account_cash:
+                # Real funded-account mode: split whatever cash IBKR still has
+                # among sleeves that are flat. AvailableFunds shrinks as you buy,
+                # so this does not double-count the book.
+                pool = max(0.0, float(snapshot.available_funds_usd or snapshot.spendable_usd or 0.0))
+                buy_cap = sleeve_buy_budget(pool, n_active, n_long)
+            else:
+                # Fixed paper book: only this sleeve's assigned cash.
+                sleeve_cash = max(0.0, float(before.cash))
+                buy_cap = sleeve_cash if sleeve_cash > 0 else None
+                if buy_cap is None:
+                    book = min(float(snapshot.spendable_usd), float(config.total_cash))
+                    buy_cap = sleeve_buy_budget(book, n_active, n_long)
 
         intent, plan_why = plan_from_signal(
             symbol,
@@ -447,9 +452,10 @@ def run_live_once(
         )
 
     raw["assets"] = assets
+    end_snapshot = broker.get_account_snapshot()
     end_report = reconcile(
         LocalSleeveState(
-            cash=broker.get_account_snapshot().cash_usd,
+            cash=end_snapshot.cash_usd,
             shares={symbol: float(row.get("shares", 0.0)) for symbol, row in assets.items()},
         ),
         broker,
@@ -460,6 +466,32 @@ def run_live_once(
             assets[symbol]["shares"] = shares
         if active is not None and clear_exit_only_if_flat(active, symbol, float(shares)):
             active_dirty = True
+
+    if config.use_account_cash:
+        # Book capital tracks full account equity; idle cash is split across flat sleeves.
+        equity = float(getattr(end_snapshot, "equity_usd", 0.0) or 0.0)
+        if equity > 0:
+            config.total_cash = equity
+            save_live_config(paths.config_path, config)
+        avail = max(
+            0.0,
+            float(getattr(end_snapshot, "available_funds_usd", 0.0) or end_snapshot.spendable_usd or 0.0),
+        )
+        flat_syms = [
+            sym
+            for sym in config.symbols
+            if float((assets.get(sym) or {}).get("shares") or 0.0) <= 0
+            and not (active_flags.get(sym) and active_flags[sym].exit_only)
+        ]
+        if flat_syms and avail > 0:
+            each = avail / float(len(flat_syms))
+            for sym in flat_syms:
+                row = assets.setdefault(
+                    sym,
+                    {"cash": 0.0, "shares": 0.0, "peak": None, "trough": None, "last_price": None},
+                )
+                row["cash"] = each
+
     raw["assets"] = assets
     _save_state(paths.state_path, raw)
     if active_dirty and active is not None:
@@ -471,6 +503,8 @@ def run_live_once(
         "rth_ok": rth_ok,
         "cash_usd": raw.get("cash_usd"),
         "trading_enabled": True,
+        "use_account_cash": config.use_account_cash,
+        "book_equity": config.total_cash if config.use_account_cash else None,
     }
 
 

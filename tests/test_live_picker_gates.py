@@ -169,6 +169,7 @@ def test_buy_uses_sleeve_cash_not_broker_million(tmp_path, monkeypatch) -> None:
             mode=TradingMode.live,
             symbols=["P", "FICO"],
             total_cash=3000.0,
+            use_account_cash=False,
             assets=[
                 SymbolParams("P", buy_rise_pct=1.0, sell_drop_pct=50.0),
                 SymbolParams("FICO", buy_rise_pct=1.0, sell_drop_pct=50.0),

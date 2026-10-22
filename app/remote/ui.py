@@ -298,7 +298,10 @@ def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -
     bits: list[str] = []
     broker_cash = status.get("cash_usd")
     broker_eq = status.get("broker_equity_usd")
-    if isinstance(broker_cash, (int, float)) and book is not None:
+    use_account = bool(status.get("use_account_cash", True))
+    if use_account:
+        bits.append("sizing from full IBKR account cash")
+    elif isinstance(broker_cash, (int, float)) and book is not None:
         if abs(float(broker_cash) - float(book)) > 1:
             bits.append(f"IBKR paper account cash {_fmt_money(broker_cash)} (not bot book)")
     if isinstance(broker_eq, (int, float)):
