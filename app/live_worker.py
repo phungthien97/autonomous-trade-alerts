@@ -43,6 +43,9 @@ from app.picker.trend_gate import allow_first_buy, sma
 from app.risk.escalate import RiskController
 from app.strategy import StrategyState, portfolio_value, step_signal
 
+# Max broker order submits per Eastern calendar day before risk incident + hard block.
+DAILY_ORDER_CAP = 10
+
 
 def _fmt_usd(value: float) -> str:
     return f"${float(value):,.2f}"
@@ -420,7 +423,7 @@ def run_live_once(
         filled = False
         exec_status = None
         orders_today = int(raw.get("orders_today", 0))
-        if intent is not None and orders_today >= 6:
+        if intent is not None and orders_today >= DAILY_ORDER_CAP:
             # Cap already hit — do not place more orders or re-spam email.
             _, created = risk.trigger("max_orders", now_utc)
             exec_status = "skipped"
@@ -434,7 +437,7 @@ def run_live_once(
                             "Daily order cap hit",
                             "",
                             "What happened",
-                            f"  Orders today: {orders_today} (cap is 6).",
+                            f"  Orders today: {orders_today} (cap is {DAILY_ORDER_CAP}).",
                             "  No more orders until you ack (counter also resets next Eastern day).",
                             "  Trading will auto-stop in 2 hours if you do not acknowledge.",
                         ]
@@ -479,7 +482,7 @@ def run_live_once(
                         ),
                         config.alerts,
                     )
-            if int(raw.get("orders_today", 0)) >= 6:
+            if int(raw.get("orders_today", 0)) >= DAILY_ORDER_CAP:
                 _, created = risk.trigger("max_orders", now_utc)
                 if created:
                     _safe_notify(
@@ -489,7 +492,7 @@ def run_live_once(
                                 "Daily order cap hit",
                                 "",
                                 "What happened",
-                                f"  Orders today: {raw['orders_today']} (cap is 6).",
+                                f"  Orders today: {raw['orders_today']} (cap is {DAILY_ORDER_CAP}).",
                                 "  No more orders until you ack (counter also resets next Eastern day).",
                                 "  Trading will auto-stop in 2 hours if you do not acknowledge.",
                             ]
