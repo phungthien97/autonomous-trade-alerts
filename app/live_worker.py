@@ -261,36 +261,91 @@ def run_live_once(
             symbol,
             {"cash": config.total_cash / max(len(config.symbols), 1), "shares": 0.0, "peak": None, "trough": None},
         )
-        broker_shares = float(report.corrected.shares.get(symbol, stored.get("shares", 0.0)))
+        # Fresh broker read each symbol — reconcile snapshot can lag mid-cycle fills.
+        live_positions = broker.get_positions()
+        broker_shares = float(live_positions.get(symbol, report.corrected.shares.get(symbol, 0.0)))
+        exit_pending = bool(stored.get("exit_pending"))
+        if broker_shares < -1e-9:
+            assets[symbol] = {
+                **stored,
+                "shares": broker_shares,
+                "last_price": price,
+                "exit_pending": True,
+            }
+            decisions.append(
+                {
+                    "symbol": symbol,
+                    "price": price,
+                    "signal": None,
+                    "signal_reason": f"SHORT BLOCKED: broker has {broker_shares:g} shares — cover manually",
+                    "plan": "short_blocked",
+                    "action": None,
+                    "shares": broker_shares,
+                    "peak": stored.get("peak"),
+                    "trough": stored.get("trough"),
+                    "rth_ok": rth_ok,
+                    "gate": "never_short",
+                }
+            )
+            actions.append(f"{symbol}:short_blocked")
+            _safe_notify(
+                "risk_alert",
+                "\n".join(
+                    [
+                        f"Short detected on {symbol}",
+                        "",
+                        "Trading path blocked for this symbol.",
+                        f"Broker shares: {broker_shares:g}",
+                        "Cover to flat before re-enabling normal signals.",
+                    ]
+                ),
+                config.alerts,
+            )
+            continue
+        if exit_pending and broker_shares <= 1e-9:
+            exit_pending = False
+            stored["exit_pending"] = False
+            stored["shares"] = 0.0
+            stored["peak"] = None
+        # While an exit is in flight, ignore strategy buys and only finish the sell.
+        strategy_shares = max(0.0, broker_shares)
         before = StrategyState(
             cash=float(stored.get("cash", 0.0)),
-            shares=broker_shares,
+            shares=0.0 if exit_pending and broker_shares <= 1e-9 else strategy_shares,
             peak=None if stored.get("peak") is None else float(stored["peak"]),
             trough=None if stored.get("trough") is None else float(stored["trough"]),
         )
         probe = StrategyState(cash=before.cash, shares=before.shares, peak=before.peak, trough=before.trough)
         trough_before = None if before.trough is None else float(before.trough)
         peak_before = None if before.peak is None else float(before.peak)
-        signal, signal_reason = step_signal(
-            probe,
-            price,
-            asset.buy_rise_pct / 100.0,
-            asset.sell_drop_pct / 100.0,
-        )
-        signal_reason = _humanize_signal_reason(
-            signal,
-            price=price,
-            trough_before=trough_before,
-            peak_before=peak_before,
-            fallback=signal_reason,
-            shares=before.shares,
-            buy_rise=asset.buy_rise_pct / 100.0,
-            sell_drop=asset.sell_drop_pct / 100.0,
-            trough_now=None if probe.trough is None else float(probe.trough),
-            peak_now=None if probe.peak is None else float(probe.peak),
-        )
+        if exit_pending and broker_shares > 1e-9:
+            signal, signal_reason = "SELL", "Exit pending — selling remaining broker shares"
+            probe = StrategyState(cash=before.cash, shares=broker_shares, peak=before.peak, trough=before.trough)
+        else:
+            signal, signal_reason = step_signal(
+                probe,
+                price,
+                asset.buy_rise_pct / 100.0,
+                asset.sell_drop_pct / 100.0,
+            )
+            signal_reason = _humanize_signal_reason(
+                signal,
+                price=price,
+                trough_before=trough_before,
+                peak_before=peak_before,
+                fallback=signal_reason,
+                shares=before.shares,
+                buy_rise=asset.buy_rise_pct / 100.0,
+                sell_drop=asset.sell_drop_pct / 100.0,
+                trough_now=None if probe.trough is None else float(probe.trough),
+                peak_now=None if probe.peak is None else float(probe.peak),
+            )
         flags = active_flags.get(symbol)
         gate_reason = None
+        if signal == "BUY" and exit_pending:
+            signal = None
+            gate_reason = "exit_pending"
+            signal_reason = "Exit pending — buys blocked until flat"
         if signal == "BUY" and flags is not None and flags.exit_only:
             signal = None
             gate_reason = "exit_only"
@@ -332,13 +387,19 @@ def run_live_once(
         intent, plan_why = plan_from_signal(
             symbol,
             signal,
-            before,
+            before if not (exit_pending and broker_shares > 1e-9) else StrategyState(
+                cash=before.cash,
+                shares=broker_shares,
+                peak=before.peak,
+                trough=before.trough,
+            ),
             price,
             config.allow_fractional_default and broker.supports_fractional(symbol),
             snapshot,
             fee_schedule,
             bar_ts_by_symbol.get(symbol, now_utc.isoformat()),
             buy_cash_cap=buy_cap,
+            broker_shares=broker_shares,
         )
         if gate_reason and intent is None and plan_why == "no signal":
             if gate_reason == "sma20_gate":
@@ -444,6 +505,10 @@ def run_live_once(
                 )
             filled = result.status == "filled"
             snapshot = broker.get_account_snapshot()
+            # SELL submit must arm exit_pending even when IB returns submitted not filled,
+            # otherwise the next hourly bar can sell the same long again and go short.
+            if intent.side == "SELL" and result.status in {"submitted", "filled", "partial"}:
+                exit_pending = True
         saved = probe if (signal is None or filled) else before
         if filled:
             saved.shares = float(broker.get_positions().get(symbol, saved.shares))
@@ -453,12 +518,21 @@ def run_live_once(
                 n_long += 1
             if active is not None and signal == "SELL" and clear_exit_only_if_flat(active, symbol, saved.shares):
                 active_dirty = True
+        if exit_pending:
+            # Optimistically flat locally so strategy cannot re-fire a full-size SELL.
+            saved = StrategyState(
+                cash=float(saved.cash),
+                shares=0.0,
+                peak=None,
+                trough=price if saved.trough is None else saved.trough,
+            )
         assets[symbol] = {
             "cash": saved.cash,
-            "shares": saved.shares,
+            "shares": max(0.0, float(saved.shares)),
             "peak": saved.peak,
             "trough": saved.trough,
             "last_price": price,
+            "exit_pending": bool(exit_pending),
         }
         decisions.append(
             {
@@ -496,9 +570,20 @@ def run_live_once(
     )
     raw["cash_usd"] = end_report.corrected.cash
     for symbol, shares in end_report.corrected.shares.items():
+        sh = float(shares)
         if symbol in assets:
-            assets[symbol]["shares"] = shares
-        if active is not None and clear_exit_only_if_flat(active, symbol, float(shares)):
+            if sh < -1e-9:
+                # Never persist a short as a normal long sleeve; keep blocked.
+                assets[symbol]["shares"] = sh
+                assets[symbol]["exit_pending"] = True
+            elif bool(assets[symbol].get("exit_pending")) and sh > 1e-9:
+                # Exit still working — keep local shares at 0 so we don't re-sell full size.
+                assets[symbol]["shares"] = 0.0
+            else:
+                assets[symbol]["shares"] = max(0.0, sh)
+                if sh <= 1e-9:
+                    assets[symbol]["exit_pending"] = False
+        if active is not None and clear_exit_only_if_flat(active, symbol, max(0.0, sh)):
             active_dirty = True
 
     avail = max(

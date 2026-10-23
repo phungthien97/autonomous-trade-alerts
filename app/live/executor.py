@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.audit.log import AuditLog
 from app.broker.base import BrokerClient
@@ -8,6 +8,7 @@ from app.live.idempotency import IdempotencyStore, intent_key
 from app.live.modes import TradingMode
 from app.live.planner import OrderIntent
 from app.live.queue import PendingIntent, PendingIntentStore
+from app.live.sizing import sell_share_quantity
 
 
 @dataclass
@@ -47,7 +48,32 @@ def execute_intent(
         return ExecuteResult("dry_run")
     if mode not in (TradingMode.broker_paper, TradingMode.live):
         return ExecuteResult("skipped")
-    result = broker.place_market_order(intent.symbol, intent.side, intent.quantity)
+
+    # Last-second never-short: re-read broker longs before any SELL hits the wire.
+    live_intent = intent
+    if intent.side == "SELL":
+        live_long = max(0.0, float(broker.get_positions().get(intent.symbol, 0.0)))
+        allow_frac = abs(float(intent.quantity) - round(float(intent.quantity))) > 1e-9
+        capped = sell_share_quantity(live_long, allow_fractional=allow_frac)
+        if capped <= 0:
+            audit.append(
+                "skipped",
+                {"key": key, "reason": "would short", "broker_long": live_long},
+            )
+            return ExecuteResult("skipped")
+        if capped + 1e-9 < float(intent.quantity):
+            live_intent = replace(intent, quantity=capped)
+            audit.append(
+                "sell_capped",
+                {
+                    "symbol": intent.symbol,
+                    "requested": intent.quantity,
+                    "capped": capped,
+                    "broker_long": live_long,
+                },
+            )
+
+    result = broker.place_market_order(live_intent.symbol, live_intent.side, live_intent.quantity)
     audit.append("order_submitted", {"order_id": result.order_id, "status": result.status})
     if result.status == "partial":
         audit.append(

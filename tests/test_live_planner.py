@@ -66,3 +66,59 @@ def test_buy_cash_cap_overrides_stale_sleeve_cash() -> None:
     assert reason == "planned"
     assert intent is not None
     assert intent.quantity == 2.0
+
+
+def test_sell_capped_to_broker_long_shares() -> None:
+    state = StrategyState(cash=0.0, shares=504.0, peak=450.0, trough=None)
+    snap = AccountSnapshot(0.0, 0.0, 200000.0)
+    intent, reason = plan_from_signal(
+        "AMGN",
+        "SELL",
+        state,
+        440.0,
+        False,
+        snap,
+        default_ibkr_us_stock_schedule(),
+        "bar-5",
+        broker_shares=100.0,
+    )
+    assert reason == "planned"
+    assert intent is not None
+    assert intent.quantity == 100.0
+
+
+def test_sell_blocked_when_broker_already_flat() -> None:
+    state = StrategyState(cash=0.0, shares=504.0, peak=450.0, trough=None)
+    snap = AccountSnapshot(0.0, 0.0, 200000.0)
+    intent, reason = plan_from_signal(
+        "AMGN",
+        "SELL",
+        state,
+        440.0,
+        False,
+        snap,
+        default_ibkr_us_stock_schedule(),
+        "bar-6",
+        broker_shares=0.0,
+    )
+    assert intent is None
+    assert reason == "zero quantity"
+
+
+def test_buy_blocked_while_short() -> None:
+    state = StrategyState(cash=100000.0, shares=-10.0, peak=None, trough=400.0)
+    snap = AccountSnapshot(100000.0, 100000.0, 100000.0, available_funds_usd=100000.0)
+    intent, reason = plan_from_signal(
+        "AMGN",
+        "BUY",
+        state,
+        440.0,
+        False,
+        snap,
+        default_ibkr_us_stock_schedule(),
+        "bar-7",
+        broker_shares=-10.0,
+        buy_cash_cap=50000.0,
+    )
+    assert intent is None
+    assert reason == "short_blocked"

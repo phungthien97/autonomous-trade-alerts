@@ -1,6 +1,12 @@
 import pytest
 
-from app.live import AccountSnapshot, assert_never_borrow, would_create_debit
+from app.live import (
+    AccountSnapshot,
+    assert_never_borrow,
+    assert_never_short,
+    sell_qty_would_short,
+    would_create_debit,
+)
 
 
 def _snap(cash: float, *, available: float | None = None, buying_power: float | None = None) -> AccountSnapshot:
@@ -39,3 +45,12 @@ def test_available_funds_allows_same_day_turnover_not_leverage() -> None:
     assert would_create_debit("BUY", 500.0, 1.0, snap) is True
     # Must not treat BuyingPower 1500 as spendable
     assert would_create_debit("BUY", 1400.0, 1.0, snap) is True
+
+
+def test_never_short_guard() -> None:
+    assert sell_qty_would_short(504.0, 504.0) is False
+    assert sell_qty_would_short(505.0, 504.0) is True
+    assert sell_qty_would_short(1.0, 0.0) is True
+    assert_never_short(100.0, 100.0)
+    with pytest.raises(ValueError, match="short"):
+        assert_never_short(101.0, 100.0)
