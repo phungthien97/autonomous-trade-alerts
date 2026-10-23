@@ -62,6 +62,21 @@ def test_disconnect_cooldown_suppresses_repeats(monkeypatch, tmp_path) -> None:
     assert sent["n"] == 2
 
 
+def test_risk_alert_cooldown_suppresses_repeats(monkeypatch, tmp_path) -> None:
+    cool = tmp_path / "cooldown.json"
+    monkeypatch.setenv("ALERT_COOLDOWN_PATH", str(cool))
+    sent = {"n": 0}
+
+    def fake_send(subject, body):
+        sent["n"] += 1
+        return True
+
+    monkeypatch.setattr("app.notifier.send_signal_email", fake_send)
+    assert notify_live_event("risk_alert", "cap1") is True
+    assert notify_live_event("risk_alert", "cap2") is False
+    assert sent["n"] == 1
+
+
 def test_send_signal_email_body_gets_eastern_stamp(monkeypatch) -> None:
     monkeypatch.setenv("GMAIL_USER", "a@example.com")
     monkeypatch.setenv("GMAIL_APP_PASSWORD", "abcdefghijklmnop")

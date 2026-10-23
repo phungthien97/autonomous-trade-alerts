@@ -223,6 +223,11 @@ def run_live_once(
     closes_by_symbol = closes_by_symbol or {}
 
     raw = _load_state(paths.state_path)
+    # Reset daily order counter on Eastern calendar day change.
+    orders_day = now_utc.astimezone(ZoneInfo("America/Toronto")).date().isoformat()
+    if raw.get("orders_day") != orders_day:
+        raw["orders_today"] = 0
+        raw["orders_day"] = orders_day
     assets = raw.setdefault("assets", {})
     local = LocalSleeveState(
         cash=float(raw.get("cash_usd", config.total_cash)),
@@ -414,6 +419,29 @@ def run_live_once(
             plan_why = "can't afford 1 share"
         filled = False
         exec_status = None
+        orders_today = int(raw.get("orders_today", 0))
+        if intent is not None and orders_today >= 6:
+            # Cap already hit — do not place more orders or re-spam email.
+            _, created = risk.trigger("max_orders", now_utc)
+            exec_status = "skipped"
+            plan_why = "daily order cap"
+            actions.append(f"{symbol}:order_cap")
+            if created:
+                _safe_notify(
+                    "risk_alert",
+                    "\n".join(
+                        [
+                            "Daily order cap hit",
+                            "",
+                            "What happened",
+                            f"  Orders today: {orders_today} (cap is 6).",
+                            "  No more orders until you ack (counter also resets next Eastern day).",
+                            "  Trading will auto-stop in 2 hours if you do not acknowledge.",
+                        ]
+                    ),
+                    config.alerts,
+                )
+            intent = None
         if intent is not None:
             result = execute_intent(
                 intent,
@@ -426,43 +454,48 @@ def run_live_once(
             )
             exec_status = result.status
             actions.append(f"{symbol}:{result.status}")
-            raw["orders_today"] = int(raw.get("orders_today", 0)) + (1 if result.status in {"filled", "partial", "submitted"} else 0)
+            raw["orders_today"] = int(raw.get("orders_today", 0)) + (
+                1 if result.status in {"filled", "partial", "submitted"} else 0
+            )
             if result.status == "rejected":
                 raw["reject_streak"] = int(raw.get("reject_streak", 0)) + 1
             else:
                 raw["reject_streak"] = 0
             if raw["reject_streak"] >= 3:
-                risk.trigger("reject_storm", now_utc)
-                _safe_notify(
-                    "risk_alert",
-                    "\n".join(
-                        [
-                            "Repeated order rejects",
-                            "",
-                            "What happened",
-                            "  Three rejects in a row — risk incident opened.",
-                            "  Trading will auto-stop in 2 hours if you do not acknowledge.",
-                            "",
-                            f"Latest: {symbol} {intent.side}",
-                        ]
-                    ),
-                    config.alerts,
-                )
-            if raw["orders_today"] > 6:
-                risk.trigger("max_orders", now_utc)
-                _safe_notify(
-                    "risk_alert",
-                    "\n".join(
-                        [
-                            "Daily order cap hit",
-                            "",
-                            "What happened",
-                            f"  Orders today: {raw['orders_today']} (cap is 6).",
-                            "  Risk incident opened — ack within 2 hours or trading auto-stops.",
-                        ]
-                    ),
-                    config.alerts,
-                )
+                _, created = risk.trigger("reject_storm", now_utc)
+                if created:
+                    _safe_notify(
+                        "risk_alert",
+                        "\n".join(
+                            [
+                                "Repeated order rejects",
+                                "",
+                                "What happened",
+                                "  Three rejects in a row — risk incident opened.",
+                                "  Trading will auto-stop in 2 hours if you do not acknowledge.",
+                                "",
+                                f"Latest: {symbol} {intent.side}",
+                            ]
+                        ),
+                        config.alerts,
+                    )
+            if int(raw.get("orders_today", 0)) >= 6:
+                _, created = risk.trigger("max_orders", now_utc)
+                if created:
+                    _safe_notify(
+                        "risk_alert",
+                        "\n".join(
+                            [
+                                "Daily order cap hit",
+                                "",
+                                "What happened",
+                                f"  Orders today: {raw['orders_today']} (cap is 6).",
+                                "  No more orders until you ack (counter also resets next Eastern day).",
+                                "  Trading will auto-stop in 2 hours if you do not acknowledge.",
+                            ]
+                        ),
+                        config.alerts,
+                    )
             if result.status == "filled":
                 qty = intent.quantity
                 qty_txt = f"{qty:g}" if float(qty) == int(qty) else f"{qty:.4f}"

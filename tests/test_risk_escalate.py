@@ -6,7 +6,8 @@ from app.risk import RiskController
 def test_tick_before_two_hours_stays_enabled(tmp_path) -> None:
     ctl = RiskController(tmp_path / "risk.json")
     now = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
-    ctl.trigger("max_orders", now)
+    _, created = ctl.trigger("max_orders", now)
+    assert created is True
     assert ctl.tick(now + timedelta(hours=1)) is False
     assert ctl.trading_enabled is True
 
@@ -35,3 +36,13 @@ def test_enable_after_stop(tmp_path) -> None:
     ctl.tick(now + timedelta(hours=2))
     ctl.enable()
     assert ctl.trading_enabled is True
+
+
+def test_trigger_only_created_once_while_open(tmp_path) -> None:
+    ctl = RiskController(tmp_path / "risk.json")
+    now = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+    first, created1 = ctl.trigger("max_orders", now)
+    second, created2 = ctl.trigger("max_orders", now + timedelta(minutes=5))
+    assert created1 is True
+    assert created2 is False
+    assert first.id == second.id

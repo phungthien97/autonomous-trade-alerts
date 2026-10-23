@@ -15,6 +15,8 @@ EASTERN = ZoneInfo("America/Toronto")
 _ALERT_COOLDOWN_SEC = {
     "disconnect": 6 * 3600,  # one email per outage window
     "weekly_2fa": 6 * 3600,
+    "risk_alert": 6 * 3600,  # order-cap / reject-storm must not mail every cycle
+    "trading_stopped": 6 * 3600,
 }
 
 

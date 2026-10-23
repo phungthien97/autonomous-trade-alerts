@@ -70,13 +70,18 @@ class RiskController:
         enabled, _ = self._read()
         return enabled
 
-    def trigger(self, kind: str, now: datetime) -> OpenIncident:
+    def trigger(self, kind: str, now: datetime) -> tuple[OpenIncident, bool]:
+        """Open a risk incident if none is active.
+
+        Returns ``(incident, created)`` — ``created`` is True only on the first
+        open so callers can email once instead of every worker cycle.
+        """
         enabled, incident = self._read()
         if incident is not None and incident.acked_at is None and not incident.stopped:
-            return incident
+            return incident, False
         incident = OpenIncident(id=str(uuid.uuid4()), kind=kind, alerted_at=_iso(now))
         self._write(enabled, incident)
-        return incident
+        return incident, True
 
     def ack(self, now: datetime) -> None:
         enabled, incident = self._read()
