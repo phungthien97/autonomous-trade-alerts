@@ -8,6 +8,7 @@ from math import floor
 from pathlib import Path
 from typing import Any
 
+from app.live.account_nav import day_pnl_vs_prior_close
 from app.live.metrics import equal_weight_bh_value, returns_from_values
 
 
@@ -271,10 +272,16 @@ def position_rows(
     use_account_cash: bool = False,
     available_cash: float | None = None,
     cycle_reasons: dict[str, str] | None = None,
+    orders_today_by_symbol: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Enrich positions with mkt_value, weight_pct, and buy/sell distance cues."""
     flags = {str(row.get("symbol")): row for row in (picker_active or []) if row.get("symbol")}
     reasons = {str(k): str(v) for k, v in (cycle_reasons or {}).items() if v}
+    orders_by_sym = {
+        str(k): int(v)
+        for k, v in (orders_today_by_symbol or {}).items()
+        if v is not None
+    }
     total = float(nav) if nav and nav > 0 else book_nav(positions)
     flat_n = sum(1 for row in (positions or []) if float(row.get("shares") or 0.0) <= 0)
     buy_budget = None
@@ -350,6 +357,7 @@ def position_rows(
                 "flag": state,
                 "reason": reasons.get(sym) or "",
                 "last_action": row.get("last_action"),
+                "orders_today": int(orders_by_sym.get(sym) or 0),
             }
         )
     return out
@@ -428,13 +436,18 @@ def live_money_snapshot(
     positions: list[dict[str, Any]],
     total_cash: float | None,
     equity_path: Path | None = None,
+    account_nav_path: Path | None = None,
     symbols: list[str] | None = None,
     picker_active: list[dict[str, Any]] | None = None,
     use_account_cash: bool = False,
     broker_cash: float | None = None,
     broker_equity: float | None = None,
     available_funds: float | None = None,
+    broker_stock_value: float | None = None,
+    broker_accrued_cash: float | None = None,
     cycle_reasons: dict[str, str] | None = None,
+    orders_today_by_symbol: dict[str, int] | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Assemble Live-tab money hero + holdings from files (and optional equity.csv)."""
     start = float(total_cash) if total_cash is not None else None
@@ -444,9 +457,14 @@ def live_money_snapshot(
         picker_active=picker_active,
     )
     spendable_for_buys: float | None = None
+    accrued: float | None = (
+        float(broker_accrued_cash) if broker_accrued_cash is not None else None
+    )
     if use_account_cash:
-        # Paper IBKR may be CAD: keep hero in one currency (equity − cash = stocks).
-        # Do not sum USD share marks into a CAD NetLiquidation — that won't add up.
+        # Paper IBKR base currency may be CAD. Prefer broker tags in that currency:
+        # NetLiquidation, TotalCashValue, GrossPositionValue, AccruedCash.
+        # Do NOT use equity − cash for "stocks" — that residual is often AccruedCash
+        # (interest), not share holdings.
         if broker_equity is not None and float(broker_equity) > 0:
             nav = float(broker_equity)
         elif start is not None and start > 0:
@@ -454,7 +472,11 @@ def live_money_snapshot(
         else:
             nav = 0.0
         cash = float(broker_cash) if broker_cash is not None else 0.0
-        if broker_cash is not None and nav > 0:
+        if broker_stock_value is not None:
+            invested = max(0.0, float(broker_stock_value))
+        elif broker_cash is not None and nav > 0 and accrued is not None:
+            invested = max(0.0, nav - cash - accrued)
+        elif broker_cash is not None and nav > 0:
             invested = max(0.0, nav - cash)
         else:
             invested = 0.0
@@ -466,7 +488,7 @@ def live_money_snapshot(
                 if shares > 0 and isinstance(px, (int, float)):
                     invested += shares * float(px)
             if nav <= 0:
-                nav = invested + cash
+                nav = invested + cash + (accrued or 0.0)
         spendable_for_buys = (
             float(available_funds)
             if available_funds is not None
@@ -519,10 +541,21 @@ def live_money_snapshot(
         if edge.get("ok") and bot_return_pct is None:
             bot_return_pct = edge.get("bot_return_pct")
 
-    # Day Δ from share marks — not Portfolio_Value (sleeve resizes look like huge P&L).
+    # Day Δ:
+    # - Account mode: live NetLiquidation vs prior Eastern day in account_nav.csv
+    #   (includes realized trades, cash, accrued interest — not just open marks).
+    # - Book mode: share mark changes only (ignore sleeve cash resizes).
     day_delta: float | None
     day_delta_pct: float | None
-    if invested <= 0:
+    if use_account_cash:
+        day_delta, day_delta_pct = None, None
+        if account_nav_path is not None and nav > 0:
+            day_delta, day_delta_pct = day_pnl_vs_prior_close(
+                account_nav_path,
+                current_equity=nav,
+                now=now,
+            )
+    elif invested <= 0:
         day_delta, day_delta_pct = 0.0, 0.0
     else:
         prior_prices = _prior_day_prices_from_equity_rows(equity_path) if equity_path else {}
@@ -541,11 +574,13 @@ def live_money_snapshot(
         use_account_cash=use_account_cash,
         available_cash=spendable_for_buys if use_account_cash else None,
         cycle_reasons=cycle_reasons,
+        orders_today_by_symbol=orders_today_by_symbol,
     )
     return {
         "nav": nav,
         "cash": cash,
         "invested": invested,
+        "accrued_cash": accrued,
         "available_funds": spendable_for_buys,
         "book_capital": start,
         "bot_return_pct": bot_return_pct,

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 from app.remote.money import (
     bh_edge_proxy,
@@ -238,10 +241,12 @@ def test_account_mode_ignores_stale_long_sleeve_cash() -> None:
         use_account_cash=True,
         broker_cash=400_000.0,
         broker_equity=1_000_000.0,
+        broker_stock_value=600_000.0,
         available_funds=750_000.0,
         cycle_reasons={"P": "Waiting: need $119.18 (+1% from low $118.00); now $120.00"},
+        orders_today_by_symbol={"AMGN": 3, "P": 1},
     )
-    # Hero stays in one currency: stocks = equity − cash (not USD share marks).
+    # Hero "In stocks" uses broker GrossPositionValue (same currency as NAV).
     assert snap["invested"] == 600_000.0
     assert snap["cash"] == 400_000.0
     assert snap["nav"] == 1_000_000.0
@@ -252,9 +257,74 @@ def test_account_mode_ignores_stale_long_sleeve_cash() -> None:
     assert by_sym["AMGN"]["flag"] == "in stock"
     assert by_sym["AMGN"]["peak"] == 450.0
     assert by_sym["AMGN"]["sell_trigger"] == 441.0  # 450 * (1 - 0.02)
+    assert by_sym["AMGN"]["orders_today"] == 3
     assert by_sym["P"]["buy_budget"] == 750_000.0  # deployable funds, not statement cash
     assert by_sym["P"]["planned_shares"] == 6250  # floor(750000 / 120)
     assert by_sym["P"]["trough"] == 118.0
     assert by_sym["P"]["buy_trigger"] == 119.18
     assert by_sym["P"]["reason"].startswith("Waiting:")
     assert by_sym["P"]["flag"] == "awaiting buy"
+    assert by_sym["P"]["orders_today"] == 1
+
+
+def test_account_mode_day_pnl_from_account_nav(tmp_path: Path) -> None:
+    nav_path = tmp_path / "account_nav.csv"
+    nav_path.write_text(
+        "date,equity,at_utc\n"
+        "2026-10-25,969898.20,2026-10-26T03:57:46+00:00\n"
+        "2026-10-26,977508.62,2026-10-27T00:16:20+00:00\n",
+        encoding="utf-8",
+    )
+    # Freeze "now" on Eastern 2026-10-26 evening so prior close is 2026-10-25.
+    snap = live_money_snapshot(
+        positions=[{"symbol": "P", "shares": 100.0, "cash": 0.0, "last_price": 130.0}],
+        total_cash=977_508.62,
+        account_nav_path=nav_path,
+        symbols=["P"],
+        use_account_cash=True,
+        broker_cash=300_000.0,
+        broker_equity=977_508.62,
+        broker_stock_value=677_508.62,
+        now=datetime(2026, 10, 27, 0, 20, tzinfo=timezone.utc),  # still Oct 26 ET
+    )
+    # Live equity vs prior Eastern day (2026-10-25), not same-day mark noise.
+    assert snap["day_delta"] == pytest.approx(977_508.62 - 969_898.20)
+    assert snap["day_delta_pct"] == pytest.approx(
+        ((977_508.62 - 969_898.20) / 969_898.20) * 100.0
+    )
+
+
+def test_account_mode_flat_accrued_interest_is_not_stocks() -> None:
+    """NetLiquidation − TotalCashValue includes AccruedCash — not share value."""
+    snap = live_money_snapshot(
+        positions=[
+            {"symbol": "AMGN", "shares": 0.0, "cash": 100_000.0, "last_price": 440.0},
+            {"symbol": "P", "shares": 0.0, "cash": 100_000.0, "last_price": 120.0},
+        ],
+        total_cash=969_903.66,
+        symbols=["AMGN", "P"],
+        use_account_cash=True,
+        broker_cash=969_110.33,
+        broker_equity=969_903.66,
+        broker_stock_value=0.0,
+        broker_accrued_cash=793.33,
+        available_funds=969_131.41,
+    )
+    assert snap["invested"] == 0.0
+    assert snap["cash"] == 969_110.33
+    assert snap["nav"] == 969_903.66
+    assert snap["accrued_cash"] == 793.33
+
+
+def test_account_mode_subtracts_accrued_when_gross_missing() -> None:
+    snap = live_money_snapshot(
+        positions=[],
+        total_cash=1_000_793.33,
+        symbols=[],
+        use_account_cash=True,
+        broker_cash=1_000_000.0,
+        broker_equity=1_000_793.33,
+        broker_accrued_cash=793.33,
+    )
+    assert snap["invested"] == 0.0
+    assert snap["accrued_cash"] == 793.33

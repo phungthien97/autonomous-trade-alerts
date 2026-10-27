@@ -43,8 +43,29 @@ from app.picker.trend_gate import allow_first_buy, sma
 from app.risk.escalate import RiskController
 from app.strategy import StrategyState, portfolio_value, step_signal
 
-# Max broker order submits per Eastern calendar day before risk incident + hard block.
-DAILY_ORDER_CAP = 10
+# Default max broker order submits per symbol per Eastern day
+# (overridden by config.daily_order_cap).
+DAILY_ORDER_CAP = 5
+
+
+def _daily_order_cap(config) -> int:
+    """Per-symbol daily submit cap (not account-wide)."""
+    raw = getattr(config, "daily_order_cap", DAILY_ORDER_CAP)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DAILY_ORDER_CAP
+    return value if value > 0 else DAILY_ORDER_CAP
+
+
+def _orders_today_for_symbol(raw: dict, symbol: str) -> int:
+    by_sym = raw.get("orders_today_by_symbol") or {}
+    if not isinstance(by_sym, dict):
+        return 0
+    try:
+        return int(by_sym.get(symbol) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _fmt_usd(value: float) -> str:
@@ -226,11 +247,14 @@ def run_live_once(
     closes_by_symbol = closes_by_symbol or {}
 
     raw = _load_state(paths.state_path)
-    # Reset daily order counter on Eastern calendar day change.
+    # Reset daily order counters on Eastern calendar day change.
     orders_day = now_utc.astimezone(ZoneInfo("America/Toronto")).date().isoformat()
     if raw.get("orders_day") != orders_day:
         raw["orders_today"] = 0
+        raw["orders_today_by_symbol"] = {}
         raw["orders_day"] = orders_day
+    if not isinstance(raw.get("orders_today_by_symbol"), dict):
+        raw["orders_today_by_symbol"] = {}
     assets = raw.setdefault("assets", {})
     local = LocalSleeveState(
         cash=float(raw.get("cash_usd", config.total_cash)),
@@ -422,9 +446,10 @@ def run_live_once(
             plan_why = "can't afford 1 share"
         filled = False
         exec_status = None
-        orders_today = int(raw.get("orders_today", 0))
-        if intent is not None and orders_today >= DAILY_ORDER_CAP:
-            # Cap already hit — do not place more orders or re-spam email.
+        orders_for_sym = _orders_today_for_symbol(raw, symbol)
+        order_cap = _daily_order_cap(config)
+        if intent is not None and orders_for_sym >= order_cap:
+            # Per-symbol cap already hit — skip this ticker only; do not re-spam email.
             _, created = risk.trigger("max_orders", now_utc)
             exec_status = "skipped"
             plan_why = "daily order cap"
@@ -434,11 +459,13 @@ def run_live_once(
                     "risk_alert",
                     "\n".join(
                         [
-                            "Daily order cap hit",
+                            f"Daily order cap hit — {symbol}",
                             "",
                             "What happened",
-                            f"  Orders today: {orders_today} (cap is {DAILY_ORDER_CAP}).",
-                            "  No more orders until you ack (counter also resets next Eastern day).",
+                            f"  {symbol} orders today: {orders_for_sym} (cap is {order_cap} per symbol).",
+                            "  This symbol is blocked until you ack (counter also resets next Eastern day).",
+                            "  Other symbols can still trade under their own caps.",
+                            "  Raise the per-symbol cap in Live → Controls if you need more room today.",
                             "  Trading will auto-stop in 2 hours if you do not acknowledge.",
                         ]
                     ),
@@ -457,9 +484,13 @@ def run_live_once(
             )
             exec_status = result.status
             actions.append(f"{symbol}:{result.status}")
-            raw["orders_today"] = int(raw.get("orders_today", 0)) + (
-                1 if result.status in {"filled", "partial", "submitted"} else 0
-            )
+            if result.status in {"filled", "partial", "submitted"}:
+                raw["orders_today"] = int(raw.get("orders_today", 0)) + 1
+                by_sym = raw.setdefault("orders_today_by_symbol", {})
+                if not isinstance(by_sym, dict):
+                    by_sym = {}
+                    raw["orders_today_by_symbol"] = by_sym
+                by_sym[symbol] = int(by_sym.get(symbol) or 0) + 1
             if result.status == "rejected":
                 raw["reject_streak"] = int(raw.get("reject_streak", 0)) + 1
             else:
@@ -482,18 +513,21 @@ def run_live_once(
                         ),
                         config.alerts,
                     )
-            if int(raw.get("orders_today", 0)) >= DAILY_ORDER_CAP:
+            if _orders_today_for_symbol(raw, symbol) >= order_cap:
                 _, created = risk.trigger("max_orders", now_utc)
                 if created:
+                    used_sym = _orders_today_for_symbol(raw, symbol)
                     _safe_notify(
                         "risk_alert",
                         "\n".join(
                             [
-                                "Daily order cap hit",
+                                f"Daily order cap hit — {symbol}",
                                 "",
                                 "What happened",
-                                f"  Orders today: {raw['orders_today']} (cap is {DAILY_ORDER_CAP}).",
-                                "  No more orders until you ack (counter also resets next Eastern day).",
+                                f"  {symbol} orders today: {used_sym} (cap is {order_cap} per symbol).",
+                                "  This symbol is blocked until you ack (counter also resets next Eastern day).",
+                                "  Other symbols can still trade under their own caps.",
+                                "  Raise the per-symbol cap in Live → Controls if you need more room today.",
                                 "  Trading will auto-stop in 2 hours if you do not acknowledge.",
                             ]
                         ),
@@ -650,10 +684,15 @@ def run_live_once(
 
     raw["assets"] = assets
     raw["available_funds_usd"] = avail
-    _save_state(paths.state_path, raw)
     equity_for_nav = float(getattr(end_snapshot, "equity_usd", 0.0) or 0.0)
     if equity_for_nav <= 0 and config.use_account_cash:
         equity_for_nav = float(config.total_cash or 0.0)
+    raw["broker_equity_usd"] = equity_for_nav if equity_for_nav > 0 else None
+    gross = getattr(end_snapshot, "gross_position_value_usd", None)
+    raw["gross_position_value_usd"] = float(gross) if gross is not None else None
+    accrued = getattr(end_snapshot, "accrued_cash_usd", None)
+    raw["accrued_cash_usd"] = float(accrued) if accrued is not None else None
+    _save_state(paths.state_path, raw)
     if equity_for_nav > 0:
         upsert_account_nav(paths.account_nav_path, equity=equity_for_nav, at=now_utc)
     if active_dirty and active is not None:
@@ -668,6 +707,15 @@ def run_live_once(
         "trading_enabled": True,
         "use_account_cash": config.use_account_cash,
         "book_equity": config.total_cash if config.use_account_cash else None,
+        "gross_position_value_usd": raw.get("gross_position_value_usd"),
+        "accrued_cash_usd": raw.get("accrued_cash_usd"),
+        "orders_today": int(raw.get("orders_today") or 0),
+        "orders_today_by_symbol": {
+            str(k): int(v)
+            for k, v in (raw.get("orders_today_by_symbol") or {}).items()
+            if v is not None
+        },
+        "daily_order_cap": _daily_order_cap(config),
     }
 
 
@@ -861,6 +909,11 @@ def main(argv: list[str] | None = None) -> int:
                 "skipped": summary.get("skipped"),
                 "use_account_cash": summary.get("use_account_cash"),
                 "book_equity": summary.get("book_equity"),
+                "gross_position_value_usd": summary.get("gross_position_value_usd"),
+                "accrued_cash_usd": summary.get("accrued_cash_usd"),
+                "orders_today": summary.get("orders_today"),
+                "orders_today_by_symbol": summary.get("orders_today_by_symbol"),
+                "daily_order_cap": summary.get("daily_order_cap"),
             },
         )
     finally:

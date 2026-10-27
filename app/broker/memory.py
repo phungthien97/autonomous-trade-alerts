@@ -23,14 +23,17 @@ class InMemoryBroker:
         self._seq = 0
 
     def get_account_snapshot(self) -> AccountSnapshot:
-        equity = self.cash_usd
+        stock_value = 0.0
         for symbol, shares in self.positions.items():
-            equity += shares * self.last_prices.get(symbol, 0.0)
+            stock_value += float(shares) * float(self.last_prices.get(symbol, 0.0))
+        equity = self.cash_usd + stock_value
         return AccountSnapshot(
             cash_usd=self.cash_usd,
             buying_power_usd=self.cash_usd,
             equity_usd=equity,
             available_funds_usd=self.cash_usd,
+            gross_position_value_usd=stock_value,
+            accrued_cash_usd=0.0,
         )
 
     def get_positions(self) -> dict[str, float]:

@@ -43,6 +43,15 @@ def overlay_ibkr_marks(
         equity = getattr(snapshot, "equity_usd", None)
         if equity is not None:
             out["broker_equity_usd"] = float(equity)
+        gross = getattr(snapshot, "gross_position_value_usd", None)
+        if gross is not None:
+            out["gross_position_value_usd"] = float(gross)
+        accrued = getattr(snapshot, "accrued_cash_usd", None)
+        if accrued is not None:
+            out["accrued_cash_usd"] = float(accrued)
+        avail = getattr(snapshot, "available_funds_usd", None)
+        if avail is not None:
+            out["available_funds_usd"] = float(avail)
         price_book = getattr(broker, "last_prices", None) or {}
         rows = []
         for row in out.get("positions") or []:

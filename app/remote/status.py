@@ -60,6 +60,30 @@ def load_live_status(state_live_dir: Path) -> dict[str, Any]:
         "available_funds_usd": state.get("available_funds_usd")
         if state.get("available_funds_usd") is not None
         else (last_cycle or {}).get("available_funds_usd"),
+        "broker_equity_usd": state.get("broker_equity_usd")
+        if state.get("broker_equity_usd") is not None
+        else (last_cycle or {}).get("book_equity"),
+        "gross_position_value_usd": state.get("gross_position_value_usd")
+        if state.get("gross_position_value_usd") is not None
+        else (last_cycle or {}).get("gross_position_value_usd"),
+        "accrued_cash_usd": state.get("accrued_cash_usd")
+        if state.get("accrued_cash_usd") is not None
+        else (last_cycle or {}).get("accrued_cash_usd"),
+        "orders_today": int(
+            state.get("orders_today")
+            if state.get("orders_today") is not None
+            else (last_cycle or {}).get("orders_today") or 0
+        ),
+        "orders_today_by_symbol": dict(
+            state.get("orders_today_by_symbol")
+            if isinstance(state.get("orders_today_by_symbol"), dict)
+            else (last_cycle or {}).get("orders_today_by_symbol") or {}
+        ),
+        "daily_order_cap": int(
+            config.get("daily_order_cap")
+            if config.get("daily_order_cap") is not None
+            else (last_cycle or {}).get("daily_order_cap") or 5
+        ),
         "positions": _positions_from_assets(state.get("assets") or {}),
         "last_cycle": last_cycle,
         "total_cash": config.get("total_cash"),

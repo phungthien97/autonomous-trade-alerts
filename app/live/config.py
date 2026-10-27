@@ -29,6 +29,9 @@ class LiveConfig:
     # When True, size buys from IBKR AvailableFunds (whole account), not a
     # separate paper "book" ceiling. Matches real funded-account use.
     use_account_cash: bool = True
+    # Max broker order submits per symbol per Eastern calendar day
+    # (hard block for that symbol + one alert). Adjustable from the dashboard.
+    daily_order_cap: int = 5
     # IBKR API cannot place US equity fractionals (Error 10243 / R3).
     allow_fractional_default: bool = False
     fee_schedule_name: str = "default_ibkr_us_stock"
@@ -73,6 +76,7 @@ def _default_payload(project_root: Path | None = None) -> dict:
         "assets": [asdict(asset) for asset in cfg.assets],
         "trading_enabled": cfg.trading_enabled,
         "use_account_cash": cfg.use_account_cash,
+        "daily_order_cap": int(cfg.daily_order_cap),
         "allow_fractional_default": cfg.allow_fractional_default,
         "fee_schedule_name": cfg.fee_schedule_name,
         "alerts": dict(cfg.alerts),
@@ -90,6 +94,7 @@ def save_live_config(path: Path, config: LiveConfig | None = None) -> None:
         "assets": [asdict(asset) for asset in cfg.assets],
         "trading_enabled": cfg.trading_enabled,
         "use_account_cash": cfg.use_account_cash,
+        "daily_order_cap": int(cfg.daily_order_cap),
         "allow_fractional_default": cfg.allow_fractional_default,
         "fee_schedule_name": cfg.fee_schedule_name,
         "alerts": dict(cfg.alerts),
@@ -108,6 +113,7 @@ def load_live_config(path: Path) -> LiveConfig:
         assets=assets,
         trading_enabled=bool(raw.get("trading_enabled", True)),
         use_account_cash=bool(raw.get("use_account_cash", True)),
+        daily_order_cap=int(raw.get("daily_order_cap", 5)),
         allow_fractional_default=bool(raw.get("allow_fractional_default", False)),
         fee_schedule_name=str(raw.get("fee_schedule_name", "default_ibkr_us_stock")),
         alerts=dict(raw.get("alerts") or LiveConfig().alerts),

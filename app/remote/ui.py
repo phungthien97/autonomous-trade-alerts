@@ -9,7 +9,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.live.account_nav import load_daily_nav
-from app.live.control import ack_risk, disable_trading, enable_trading
+from app.live.control import (
+    DAILY_ORDER_CAP_MAX,
+    DAILY_ORDER_CAP_MIN,
+    ack_risk,
+    disable_trading,
+    enable_trading,
+    set_daily_order_cap,
+)
 from app.paths import LivePaths, PickerPaths, ROOT
 from app.remote.health import build_health_strip
 from app.remote.marks import dashboard_ib_client_id, overlay_ibkr_marks
@@ -204,6 +211,11 @@ def _account_holdings_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One easy table for whole-account mode: position + levels + why."""
     out: list[dict[str, Any]] = []
     for row in rows:
+        orders = row.get("orders_today")
+        try:
+            orders_txt = str(int(orders)) if orders is not None else "0"
+        except (TypeError, ValueError):
+            orders_txt = "0"
         out.append(
             {
                 "Symbol": row.get("symbol") or "—",
@@ -212,6 +224,7 @@ def _account_holdings_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "Value": _fmt_money(
                     row.get("stock_value") if row.get("stock_value") is not None else row.get("mkt_value")
                 ),
+                "Orders today": orders_txt,
                 "Low": _fmt_money(row.get("trough")) if row.get("trough") is not None else "—",
                 "High": _fmt_money(row.get("peak")) if row.get("peak") is not None else "—",
                 "Next buy/sell": _account_next_plan(row),
@@ -299,27 +312,89 @@ def _picker_sleeve_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def render_health_strip(st: Any, strip: dict[str, Any], *, marks_source: str | None = None) -> None:
+def _mode_label(mode: str) -> str:
+    labels = {
+        "broker_paper": "Paper (IBKR)",
+        "broker_live": "Live (IBKR)",
+        "live_dry_run": "Dry run",
+        "memory": "Memory sim",
+    }
+    return labels.get(str(mode), str(mode))
+
+
+def _price_source_label(source: str | None) -> str | None:
+    if not source:
+        return None
+    labels = {
+        "ibkr_rth_hourly": "Prices: IBKR hourly (regular hours)",
+        "ibkr": "Prices: IBKR",
+        "files": "Prices: saved files",
+    }
+    return labels.get(str(source), f"Prices: {source}")
+
+
+def render_health_strip(
+    st: Any,
+    strip: dict[str, Any],
+    *,
+    marks_source: str | None = None,
+) -> None:
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Worker", "fresh" if strip["worker_fresh"] else "stale")
-    c2.metric("Mode", strip["mode"])
-    c3.metric("Trading", "ON" if strip["trading_on"] else "OFF")
-    c4.metric("Risk", "OPEN" if strip["risk_open"] else "clear")
+    c1.metric(
+        "Bot run",
+        "Up to date" if strip["worker_fresh"] else "Stale",
+        help=(
+            "Whether the trading bot finished a cycle recently. "
+            "Up to date = last run within ~15 minutes. "
+            "Stale = no recent cycle — check the host or broker gateway."
+        ),
+    )
+    c2.metric(
+        "Account mode",
+        _mode_label(str(strip.get("mode") or "unknown")),
+        help=(
+            "Where orders go. "
+            "Paper (IBKR) = simulated money, no real fills. "
+            "Live (IBKR) = real money. "
+            "Dry run / Memory = local simulation only."
+        ),
+    )
+    c3.metric(
+        "Orders",
+        "Enabled" if strip["trading_on"] else "Paused",
+        help=(
+            "Master switch for placing buys/sells. "
+            "Enabled = bot may send orders when signals fire in market hours. "
+            "Paused = bot still runs and shows plans, but will not send orders."
+        ),
+    )
+    c4.metric(
+        "Risk stop",
+        "Needs ack" if strip["risk_open"] else "OK",
+        help=(
+            "Safety latch after alerts (disconnects, caps, manual stops). "
+            "OK = no open incident. "
+            "Needs ack = trading may be blocked until you acknowledge risk."
+        ),
+    )
     bits = []
     if strip.get("stale_minutes") is not None:
-        bits.append(f"{strip['stale_minutes']}m ago")
+        bits.append(f"Last cycle {strip['stale_minutes']}m ago")
     if strip.get("gateway_ok") is True:
-        bits.append("gateway OK")
+        bits.append("Broker link OK")
     elif strip.get("gateway_ok") is False:
-        bits.append("gateway FAIL")
+        bits.append("Broker link FAIL")
     if strip.get("rth_ok") is False:
-        bits.append("outside RTH")
+        bits.append("Outside market hours (no new fills)")
     elif strip.get("rth_ok") is True:
-        bits.append("RTH")
+        bits.append("Regular market hours")
     if marks_source and marks_source != "files":
-        bits.append(f"marks={marks_source}")
-    if strip.get("price_source"):
-        bits.append(str(strip["price_source"]))
+        bits.append("Live balances from IBKR")
+    elif marks_source == "files":
+        bits.append("Balances from saved files")
+    price_bit = _price_source_label(strip.get("price_source"))
+    if price_bit:
+        bits.append(price_bit)
     if bits:
         st.caption(" · ".join(bits))
     if strip.get("incident"):
@@ -343,39 +418,114 @@ def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -
     use_account = bool(status.get("use_account_cash", True)) or bool(money.get("use_account_cash"))
     if use_account:
         c1, c2, c3 = st.columns(3)
-        c1.metric("Account total", _fmt_money(nav if nav is not None else book))
-        c2.metric("In stocks", _fmt_money(invested))
-        c3.metric("Cash", _fmt_money(cash))
+        c1.metric(
+            "Account total",
+            _fmt_money(nav if nav is not None else book),
+            help=(
+                "Full broker account value (base currency). "
+                "Includes cash, stock positions, and accrued interest. "
+                "Can be higher than Cash even with nothing in stock."
+            ),
+        )
+        c2.metric(
+            "In stocks",
+            _fmt_money(invested),
+            help=(
+                "Market value of stock/ETF holdings only (broker position value). "
+                "Zero means flat — accrued interest is not counted here."
+            ),
+        )
+        c3.metric(
+            "Cash",
+            _fmt_money(cash),
+            help=(
+                "Broker statement cash balance. "
+                "Does not include accrued interest or stock positions."
+            ),
+        )
+        accrued = money.get("accrued_cash")
+        if isinstance(accrued, (int, float)) and abs(float(accrued)) >= 0.01:
+            st.caption(
+                f"Accrued interest {_fmt_money(float(accrued))} "
+                f"(part of account total; not stock holdings)"
+            )
     else:
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Book capital", _fmt_money(book))
-        c2.metric("In stocks", _fmt_money(invested))
-        c3.metric("In cash", _fmt_money(cash))
-        c4.metric("Book total", _fmt_money(nav))
+        c1.metric(
+            "Book capital",
+            _fmt_money(book),
+            help="Starting cash allocated to this bot book.",
+        )
+        c2.metric(
+            "In stocks",
+            _fmt_money(invested),
+            help="Mark-to-market value of shares held in the bot book.",
+        )
+        c3.metric(
+            "In cash",
+            _fmt_money(cash),
+            help="Cash left in the bot book (not yet in shares).",
+        )
+        c4.metric(
+            "Book total",
+            _fmt_money(nav),
+            help="In stocks + In cash for this bot book.",
+        )
 
     if use_account:
         r1, r2 = st.columns(2)
         spend = money.get("available_funds")
-        r1.metric("Can deploy now", _fmt_money(spend) if spend is not None else "—")
+        r1.metric(
+            "Can deploy now",
+            _fmt_money(spend) if spend is not None else "—",
+            help=(
+                "Buying power the broker allows for new buys right now. "
+                "Not the same as Cash: it can include unsettled credit and "
+                "subtract a margin cushion (even when flat, FX imbalance can "
+                "leave a small hold). Buy sizing uses this ÷ flat names."
+            ),
+        )
+        day_help = (
+            "Change in full account value vs the prior Eastern calendar day "
+            "(from the daily equity log). Includes open positions, cash, "
+            "realized trades today, and accrued interest — not share marks alone."
+        )
         if day_delta is not None:
             delta_label = _fmt_money(day_delta)
             if day_pct is not None:
-                r2.metric("Day P&L", delta_label, delta=_fmt_pct(day_pct))
+                r2.metric("Day P&L", delta_label, delta=_fmt_pct(day_pct), help=day_help)
             else:
-                r2.metric("Day P&L", delta_label)
+                r2.metric("Day P&L", delta_label, help=day_help)
         else:
-            r2.metric("Day P&L", "—")
+            r2.metric("Day P&L", "—", help=day_help)
     else:
         r1, r2 = st.columns(2)
-        r1.metric("Since start", _fmt_pct(ret) if ret is not None else "—")
+        r1.metric(
+            "Since start",
+            _fmt_pct(ret) if ret is not None else "—",
+            help="Bot book return versus starting capital.",
+        )
         if day_delta is not None:
             delta_label = _fmt_money(day_delta)
             if day_pct is not None:
-                r2.metric("Day P&L", delta_label, delta=_fmt_pct(day_pct))
+                r2.metric(
+                    "Day P&L",
+                    delta_label,
+                    delta=_fmt_pct(day_pct),
+                    help="Change in book value since the prior trading day.",
+                )
             else:
-                r2.metric("Day P&L", delta_label)
+                r2.metric(
+                    "Day P&L",
+                    delta_label,
+                    help="Change in book value since the prior trading day.",
+                )
         else:
-            r2.metric("Day P&L", "—")
+            r2.metric(
+                "Day P&L",
+                "—",
+                help="Change in book value since the prior trading day.",
+            )
 
     bits: list[str] = []
     broker_cash = status.get("cash_usd")
@@ -487,7 +637,11 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
         live_status=status,
         gateway_health_log=_gateway_health_log(),
     )
-    render_health_strip(st, strip, marks_source=status.get("marks_source"))
+    render_health_strip(
+        st,
+        strip,
+        marks_source=status.get("marks_source"),
+    )
 
     st.subheader("Portfolio")
     use_account = bool(status.get("use_account_cash", True))
@@ -501,6 +655,7 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
         positions=status.get("positions") or [],
         total_cash=status.get("total_cash"),
         equity_path=live_paths.equity_path,
+        account_nav_path=live_paths.account_nav_path,
         symbols=list(status.get("symbols") or []),
         picker_active=picker.get("active") or [],
         use_account_cash=use_account,
@@ -511,7 +666,16 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
         available_funds=status.get("available_funds_usd")
         if isinstance(status.get("available_funds_usd"), (int, float))
         else None,
+        broker_stock_value=status.get("gross_position_value_usd")
+        if isinstance(status.get("gross_position_value_usd"), (int, float))
+        else None,
+        broker_accrued_cash=status.get("accrued_cash_usd")
+        if isinstance(status.get("accrued_cash_usd"), (int, float))
+        else None,
         cycle_reasons=cycle_reasons,
+        orders_today_by_symbol=status.get("orders_today_by_symbol")
+        if isinstance(status.get("orders_today_by_symbol"), dict)
+        else None,
     )
     _render_money_hero(st, money, status)
     _render_edge_strip(st, money.get("edge") or {}, money.get("bot_return_pct"))
@@ -526,10 +690,13 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
 
     if use_account:
         st.subheader("Positions")
+        cap = int(status.get("daily_order_cap") or 5)
         st.caption(
+            f"Orders today column = broker submits for that symbol today "
+            f"(limit **{cap} per symbol**, adjustable under Controls). "
             "Low / High = recent trough & peak · "
             "Next buy/sell ≈ whole shares from splitting available cash across flat names "
-            "(size shrinks if another name buys first)"
+            "(size shrinks if another name buys first)."
         )
         _show_table(
             st,
@@ -583,7 +750,9 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
         _render_performance_chart(st, live_paths.account_nav_path)
 
     st.subheader("Controls")
-    st.caption("Safe ops only — disable / enable trading and acknowledge risk incidents.")
+    st.caption(
+        "Safe ops only — pause/resume orders, acknowledge risk, adjust per-symbol daily order cap."
+    )
     b1, b2, b3 = st.columns(3)
     if b1.button("Disable trading", use_container_width=True, key="remote_disable"):
         disable_trading(live_paths)
@@ -594,6 +763,44 @@ def render_live_tab(st: Any, project_root: Path | None = None) -> None:
     if b3.button("Ack risk", use_container_width=True, key="remote_ack"):
         ack_risk(live_paths)
         st.rerun()
+
+    current_cap = int(status.get("daily_order_cap") or 5)
+    by_sym = status.get("orders_today_by_symbol") if isinstance(status.get("orders_today_by_symbol"), dict) else {}
+    busiest = 0
+    for v in by_sym.values():
+        try:
+            busiest = max(busiest, int(v or 0))
+        except (TypeError, ValueError):
+            continue
+    left = max(0, current_cap - busiest)
+    st.markdown("**Change per-symbol daily order limit**")
+    st.caption(
+        f"Each ticker may submit up to **{current_cap}** broker orders per Eastern day. "
+        f"Busiest symbol today: **{busiest}** used · **{left}** left on that name. "
+        "Counts are in the Positions table above. "
+        "Raising this does not clear a risk stop — use Ack risk if blocked. "
+        "One email when a symbol first hits the limit."
+    )
+    cap_col, btn_col = st.columns([2, 1])
+    new_cap = cap_col.number_input(
+        "Set new per-symbol limit",
+        min_value=DAILY_ORDER_CAP_MIN,
+        max_value=DAILY_ORDER_CAP_MAX,
+        value=min(max(current_cap, DAILY_ORDER_CAP_MIN), DAILY_ORDER_CAP_MAX),
+        step=1,
+        key="remote_daily_order_cap",
+        help=(
+            f"Maximum broker order submits per symbol per Eastern day. "
+            f"You can set {DAILY_ORDER_CAP_MIN}–{DAILY_ORDER_CAP_MAX}."
+        ),
+    )
+    if btn_col.button("Save cap", use_container_width=True, key="remote_save_order_cap"):
+        try:
+            written = set_daily_order_cap(live_paths, int(new_cap))
+            st.success(f"Per-symbol daily order cap set to {written}.")
+            st.rerun()
+        except (ValueError, FileNotFoundError) as exc:
+            st.error(str(exc))
 
 
 def render_paper_tab(st: Any, version: str, project_root: Path | None = None) -> None:

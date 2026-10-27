@@ -70,11 +70,17 @@ class IbkrBroker:
         available = _pick_usd_amount(by_tag, "AvailableFunds")
         if available <= 0:
             available = cash
+        # GrossPositionValue / AccruedCash may be absent on older stubs; treat
+        # missing tags as 0 so flat paper accounts do not invent "stocks".
+        has_gross = "GrossPositionValue" in by_tag
+        has_accrued = "AccruedCash" in by_tag
         return AccountSnapshot(
             cash_usd=cash,
             buying_power_usd=_pick_usd_amount(by_tag, "BuyingPower"),
             equity_usd=_pick_usd_amount(by_tag, "NetLiquidation"),
             available_funds_usd=available,
+            gross_position_value_usd=_pick_usd_amount(by_tag, "GrossPositionValue") if has_gross else None,
+            accrued_cash_usd=_pick_usd_amount(by_tag, "AccruedCash") if has_accrued else None,
         )
 
     def supports_fractional(self, symbol: str) -> bool:

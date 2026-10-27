@@ -91,3 +91,35 @@ def load_daily_nav(path: Path) -> list[dict[str, Any]]:
         )
         prev = eq
     return out
+
+
+def day_pnl_vs_prior_close(
+    path: Path,
+    *,
+    current_equity: float,
+    now: datetime | None = None,
+) -> tuple[float | None, float | None]:
+    """Account day P&L: live equity vs last logged Eastern day before today.
+
+    Uses ``account_nav.csv`` (Eastern calendar dates). Returns ``(delta, pct)``
+    or ``(None, None)`` when no prior day exists.
+    """
+    eq = float(current_equity)
+    if eq <= 0:
+        return None, None
+    when = now or datetime.now(timezone.utc)
+    today = _eastern_date(when)
+    prior_eq: float | None = None
+    for row in reversed(load_daily_nav(path)):
+        day = str(row.get("date") or "")
+        if day and day < today:
+            try:
+                prior_eq = float(row["equity"])
+            except (TypeError, ValueError, KeyError):
+                prior_eq = None
+            break
+    if prior_eq is None or prior_eq <= 0:
+        return None, None
+    delta = eq - prior_eq
+    pct = (delta / prior_eq) * 100.0
+    return delta, pct

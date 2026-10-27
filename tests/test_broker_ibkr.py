@@ -78,6 +78,27 @@ def test_cad_paper_account_fallback() -> None:
     assert snap.spendable_usd == pytest.approx(1_000_042.91)
     assert snap.buying_power_usd == 3_333_333.33
     assert snap.equity_usd == 1_000_000
+    assert snap.gross_position_value_usd is None
+    assert snap.accrued_cash_usd is None
+
+
+def test_gross_position_and_accrued_from_ibkr() -> None:
+    fake = _FakeIB()
+    fake._values = [
+        SimpleNamespace(tag="TotalCashValue", value="969110.33", currency="CAD"),
+        SimpleNamespace(tag="AvailableFunds", value="969131.41", currency="CAD"),
+        SimpleNamespace(tag="BuyingPower", value="3000000", currency="CAD"),
+        SimpleNamespace(tag="NetLiquidation", value="969903.66", currency="CAD"),
+        SimpleNamespace(tag="GrossPositionValue", value="0.00", currency="CAD"),
+        SimpleNamespace(tag="AccruedCash", value="793.33", currency="CAD"),
+    ]
+    snap = IbkrBroker(ib=fake).get_account_snapshot()
+    assert snap.equity_usd == pytest.approx(969_903.66)
+    assert snap.cash_usd == pytest.approx(969_110.33)
+    assert snap.gross_position_value_usd == 0.0
+    assert snap.accrued_cash_usd == pytest.approx(793.33)
+    # Residual equity − cash is accrued interest, not stocks.
+    assert snap.equity_usd - snap.cash_usd == pytest.approx(snap.accrued_cash_usd)
 
 
 def test_cad_converted_with_usd_exchange_rate() -> None:
