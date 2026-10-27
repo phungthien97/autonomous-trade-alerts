@@ -23,5 +23,11 @@ state_live/queue.json
 state_live/idempotency.json
 state_live/risk.json
 state_live/last_cycle.json
+# Runtime book — never overwrite on deploy (was wiped by git reset --hard once).
+state_live/config.json
+state_live/state.json
+state_live/account_nav.csv
+state_live/*.bak*
+state_live/*.bak_*
 state_picker/*
 !state_picker/.gitkeep
