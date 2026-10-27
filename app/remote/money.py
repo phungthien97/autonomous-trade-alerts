@@ -461,6 +461,8 @@ def live_money_snapshot(
         float(broker_accrued_cash) if broker_accrued_cash is not None else None
     )
     if use_account_cash:
+        from app.account_snapshot import compute_spendable
+
         # Paper IBKR base currency may be CAD. Prefer broker tags in that currency:
         # NetLiquidation, TotalCashValue, GrossPositionValue, AccruedCash.
         # Do NOT use equity − cash for "stocks" — that residual is often AccruedCash
@@ -489,13 +491,19 @@ def live_money_snapshot(
                     invested += shares * float(px)
             if nav <= 0:
                 nav = invested + cash + (accrued or 0.0)
-        spendable_for_buys = (
-            float(available_funds)
-            if available_funds is not None
-            else float(broker_cash)
-            if broker_cash is not None
-            else None
-        )
+        # Never-borrow: while long, do not size off AvailableFunds > cash
+        # (that gap is margin against open stock).
+        if broker_cash is not None or available_funds is not None:
+            gross_for_spend = (
+                float(broker_stock_value)
+                if broker_stock_value is not None
+                else (invested if invested > 0 else None)
+            )
+            spendable_for_buys = compute_spendable(
+                float(broker_cash) if broker_cash is not None else 0.0,
+                float(available_funds) if available_funds is not None else None,
+                gross_for_spend,
+            )
     else:
         cash, invested = cash_and_invested(book_positions)
         nav = book_nav(book_positions, total_cash=start)

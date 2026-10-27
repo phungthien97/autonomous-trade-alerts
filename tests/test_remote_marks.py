@@ -47,6 +47,7 @@ def test_overlay_ibkr_marks_success(monkeypatch) -> None:
     assert out["gross_position_value_usd"] == 100.0
     assert out["accrued_cash_usd"] == 0.0
     assert out["available_funds_usd"] == 900.0
+    assert out["spendable_usd"] == 900.0  # long but AF == cash
     assert out["positions"][0]["shares"] == 2.0
     assert out["positions"][0]["last_price"] == 101.0
     assert os.environ.get("IB_CLIENT_ID") == "9"

@@ -479,10 +479,11 @@ def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -
             "Can deploy now",
             _fmt_money(spend) if spend is not None else "—",
             help=(
-                "Buying power the broker allows for new buys right now. "
-                "Not the same as Cash: it can include unsettled credit and "
-                "subtract a margin cushion (even when flat, FX imbalance can "
-                "leave a small hold). Buy sizing uses this ÷ flat names."
+                "Cash the bot may spend on new buys (never-borrow). "
+                "While you hold stock this is capped at Cash — not IBKR "
+                "AvailableFunds, which can include a loan against those shares. "
+                "When flat it may match AvailableFunds (same-day unsettled credit). "
+                "Buy sizing uses this ÷ flat names."
             ),
         )
         day_help = (
@@ -531,9 +532,9 @@ def _render_money_hero(st: Any, money: dict[str, Any], status: dict[str, Any]) -
     broker_cash = status.get("cash_usd")
     broker_eq = status.get("broker_equity_usd")
     if use_account:
-        bits.append("account totals in IBKR base currency (often CAD)")
+        bits.append("account totals converted to USD when IBKR ExchangeRate is present")
         bits.append("position prices/values are USD")
-        bits.append("buy size uses Can deploy now ÷ flat names")
+        bits.append("buy size uses Can deploy now ÷ flat names (never-borrow)")
     elif isinstance(broker_cash, (int, float)) and book is not None:
         if abs(float(broker_cash) - float(book)) > 1:
             bits.append(f"IBKR paper account cash {_fmt_money(broker_cash)} (not bot book)")

@@ -1,7 +1,9 @@
 """Never-borrow / never-short guards.
 
-Same-day turnover may use AvailableFunds (unsettled credit on margin).
-BuyingPower (Reg-T leverage) is logged only and never authorizes a buy (R4).
+Spendable is ``AccountSnapshot.spendable_usd``: AvailableFunds when flat
+(same-day unsettled credit), but capped at TotalCashValue while long so
+margin against open stock cannot size buys (Q1.2 / R4).
+BuyingPower (Reg-T leverage) is logged only and never authorizes a buy.
 Sells must not exceed broker long shares (no shorting).
 """
 

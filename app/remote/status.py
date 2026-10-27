@@ -60,6 +60,9 @@ def load_live_status(state_live_dir: Path) -> dict[str, Any]:
         "available_funds_usd": state.get("available_funds_usd")
         if state.get("available_funds_usd") is not None
         else (last_cycle or {}).get("available_funds_usd"),
+        "spendable_usd": state.get("spendable_usd")
+        if state.get("spendable_usd") is not None
+        else (last_cycle or {}).get("spendable_usd"),
         "broker_equity_usd": state.get("broker_equity_usd")
         if state.get("broker_equity_usd") is not None
         else (last_cycle or {}).get("book_equity"),

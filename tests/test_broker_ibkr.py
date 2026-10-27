@@ -49,7 +49,8 @@ def test_maps_positions_and_usd_account() -> None:
     assert isinstance(snap, AccountSnapshot)
     assert snap.cash_usd == 800
     assert snap.available_funds_usd == 850
-    assert snap.spendable_usd == 850
+    # No GrossPositionValue tag → unknown longs → cap at cash (never-borrow)
+    assert snap.spendable_usd == 800
     assert snap.buying_power_usd == 1600
     assert snap.equity_usd == 1200
     # API cannot place fractional US equity orders (IBKR Error 10243) — R3 2026-10-07
@@ -71,15 +72,37 @@ def test_cad_paper_account_fallback() -> None:
         SimpleNamespace(tag="AvailableFunds", value="1000042.91", currency="CAD"),
         SimpleNamespace(tag="BuyingPower", value="3333333.33", currency="CAD"),
         SimpleNamespace(tag="NetLiquidation", value="1000000", currency="CAD"),
+        SimpleNamespace(tag="GrossPositionValue", value="0", currency="CAD"),
     ]
     snap = IbkrBroker(ib=fake).get_account_snapshot()
     assert snap.cash_usd == 1_000_000
     assert snap.available_funds_usd == pytest.approx(1_000_042.91)
+    # Flat: same-day AF allowed
     assert snap.spendable_usd == pytest.approx(1_000_042.91)
     assert snap.buying_power_usd == 3_333_333.33
     assert snap.equity_usd == 1_000_000
-    assert snap.gross_position_value_usd is None
+    assert snap.gross_position_value_usd == 0.0
     assert snap.accrued_cash_usd is None
+
+
+def test_long_cad_caps_spendable_and_converts_fx() -> None:
+    fake = _FakeIB()
+    fake._values = [
+        SimpleNamespace(tag="TotalCashValue", value="313012.93", currency="CAD"),
+        SimpleNamespace(tag="AvailableFunds", value="757902.61", currency="CAD"),
+        SimpleNamespace(tag="BuyingPower", value="2500000", currency="CAD"),
+        SimpleNamespace(tag="NetLiquidation", value="977505.57", currency="CAD"),
+        SimpleNamespace(tag="GrossPositionValue", value="663699.32", currency="CAD"),
+        SimpleNamespace(tag="AccruedCash", value="793.33", currency="CAD"),
+        SimpleNamespace(tag="ExchangeRate", value="1.41", currency="USD"),
+    ]
+    snap = IbkrBroker(ib=fake).get_account_snapshot()
+    assert snap.usd_cad_rate == pytest.approx(1.41)
+    assert snap.cash_usd == pytest.approx(313_012.93 / 1.41)
+    assert snap.available_funds_usd == pytest.approx(757_902.61 / 1.41)
+    assert snap.gross_position_value_usd == pytest.approx(663_699.32 / 1.41)
+    # Long → never-borrow spendable is cash (USD), not raw AF
+    assert snap.spendable_usd == pytest.approx(313_012.93 / 1.41)
 
 
 def test_gross_position_and_accrued_from_ibkr() -> None:

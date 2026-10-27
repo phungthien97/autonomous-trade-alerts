@@ -138,11 +138,13 @@ def main(argv: list[str] | None = None) -> int:
             positions=positions,
             prices=prices,
             equity=float(snap.equity_usd),
-            available_funds=float(snap.available_funds_usd or snap.spendable_usd),
+            available_funds=float(snap.spendable_usd),
         )
         print("plan:")
         print(f"  equity/total_cash={plan.total_cash:.2f}")
-        print(f"  available_funds={plan.available_funds:.2f}")
+        print(f"  spendable(never-borrow)={plan.available_funds:.2f}")
+        print(f"  broker_available_funds={float(snap.available_funds_usd or 0):.2f}")
+        print(f"  cash={float(snap.cash_usd):.2f}")
         print(f"  sell={plan.positions_to_sell}")
         print(f"  sleeve_cash={{{', '.join(f'{k}: {v:.2f}' for k, v in plan.sleeve_cash.items())}}}")
 
@@ -158,12 +160,13 @@ def main(argv: list[str] | None = None) -> int:
         if not dry_run:
             snap = broker.get_account_snapshot()
             equity = float(snap.equity_usd)
-            avail = float(snap.available_funds_usd or snap.spendable_usd)
+            # After flatten, spendable ≈ cash (same-day AF only if still flat).
+            avail = float(snap.spendable_usd)
             left = {s: q for s, q in broker.get_positions().items() if q > 1e-9 and s in symbols}
             if left:
                 raise RuntimeError(f"still long after flatten: {left}")
             sleeve = plan.sleeve_cash
-            # Recompute from post-flatten available funds + current prices.
+            # Recompute from post-flatten never-borrow spendable + current prices.
             from app.live.paper_reset import redistribute_sleeve_cash
 
             if prices:
@@ -175,7 +178,10 @@ def main(argv: list[str] | None = None) -> int:
                 sleeve_cash=sleeve,
                 use_account_cash=True,
             )
-            print(f"state reset ok total_cash={equity:.2f} avail={avail:.2f}")
+            print(
+                f"state reset ok total_cash={equity:.2f} "
+                f"spendable={avail:.2f} cash={float(snap.cash_usd):.2f}"
+            )
             print(f"sleeve_cash={{{', '.join(f'{k}: {v:.2f}' for k, v in sleeve.items())}}}")
         else:
             print("dry-run: skipped flatten fills + state write")

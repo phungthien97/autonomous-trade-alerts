@@ -403,10 +403,10 @@ def run_live_once(
         buy_cap = None
         if signal == "BUY":
             if config.use_account_cash:
-                # Real funded-account mode: split whatever cash IBKR still has
-                # among sleeves that are flat. AvailableFunds shrinks as you buy,
-                # so this does not double-count the book.
-                pool = max(0.0, float(snapshot.available_funds_usd or snapshot.spendable_usd or 0.0))
+                # Real funded-account mode: split never-borrow spendable among
+                # flat sleeves. spendable caps AvailableFunds at cash while long
+                # so margin against open stock cannot inflate ticket size.
+                pool = max(0.0, float(snapshot.spendable_usd))
                 buy_cap = sleeve_buy_budget(pool, n_active, n_long)
             else:
                 # Fixed paper book: only this sleeve's assigned cash.
@@ -656,10 +656,9 @@ def run_live_once(
         if active is not None and clear_exit_only_if_flat(active, symbol, max(0.0, sh)):
             active_dirty = True
 
-    avail = max(
-        0.0,
-        float(getattr(end_snapshot, "available_funds_usd", 0.0) or end_snapshot.spendable_usd or 0.0),
-    )
+    # Raw AF kept for logging; buy sizing / sleeve park use never-borrow spendable.
+    raw_af = getattr(end_snapshot, "available_funds_usd", None)
+    spendable = max(0.0, float(end_snapshot.spendable_usd))
     if config.use_account_cash:
         # Book capital tracks full account equity; idle cash is split across flat sleeves.
         # Long sleeves keep cash at 0 so the dashboard does not show stale "half cash".
@@ -677,13 +676,14 @@ def run_live_once(
                 row["cash"] = 0.0
             elif not (active_flags.get(sym) and active_flags[sym].exit_only):
                 flat_syms.append(sym)
-        if flat_syms and avail > 0:
-            each = avail / float(len(flat_syms))
+        if flat_syms and spendable > 0:
+            each = spendable / float(len(flat_syms))
             for sym in flat_syms:
                 assets[sym]["cash"] = each
 
     raw["assets"] = assets
-    raw["available_funds_usd"] = avail
+    raw["available_funds_usd"] = float(raw_af) if raw_af is not None else spendable
+    raw["spendable_usd"] = spendable
     equity_for_nav = float(getattr(end_snapshot, "equity_usd", 0.0) or 0.0)
     if equity_for_nav <= 0 and config.use_account_cash:
         equity_for_nav = float(config.total_cash or 0.0)
@@ -703,7 +703,8 @@ def run_live_once(
         "decisions": decisions,
         "rth_ok": rth_ok,
         "cash_usd": raw.get("cash_usd"),
-        "available_funds_usd": avail,
+        "available_funds_usd": raw.get("available_funds_usd"),
+        "spendable_usd": raw.get("spendable_usd"),
         "trading_enabled": True,
         "use_account_cash": config.use_account_cash,
         "book_equity": config.total_cash if config.use_account_cash else None,
@@ -904,6 +905,7 @@ def main(argv: list[str] | None = None) -> int:
                 "rth_ok": summary.get("rth_ok"),
                 "cash_usd": summary.get("cash_usd"),
                 "available_funds_usd": summary.get("available_funds_usd"),
+                "spendable_usd": summary.get("spendable_usd"),
                 "actions": summary.get("actions", []),
                 "decisions": summary.get("decisions", []),
                 "skipped": summary.get("skipped"),

@@ -250,7 +250,8 @@ def test_account_mode_ignores_stale_long_sleeve_cash() -> None:
     assert snap["invested"] == 600_000.0
     assert snap["cash"] == 400_000.0
     assert snap["nav"] == 1_000_000.0
-    assert snap["available_funds"] == 750_000.0
+    # Long + AF > cash → Can deploy / buy budget capped at cash (never-borrow)
+    assert snap["available_funds"] == 400_000.0
     by_sym = {r["symbol"]: r for r in snap["holdings"]}
     assert by_sym["AMGN"]["sleeve_cash"] == 0.0
     assert by_sym["AMGN"]["stock_value"] == 220_000.0  # row still USD marks
@@ -258,8 +259,8 @@ def test_account_mode_ignores_stale_long_sleeve_cash() -> None:
     assert by_sym["AMGN"]["peak"] == 450.0
     assert by_sym["AMGN"]["sell_trigger"] == 441.0  # 450 * (1 - 0.02)
     assert by_sym["AMGN"]["orders_today"] == 3
-    assert by_sym["P"]["buy_budget"] == 750_000.0  # deployable funds, not statement cash
-    assert by_sym["P"]["planned_shares"] == 6250  # floor(750000 / 120)
+    assert by_sym["P"]["buy_budget"] == 400_000.0
+    assert by_sym["P"]["planned_shares"] == 3333  # floor(400000 / 120)
     assert by_sym["P"]["trough"] == 118.0
     assert by_sym["P"]["buy_trigger"] == 119.18
     assert by_sym["P"]["reason"].startswith("Waiting:")
