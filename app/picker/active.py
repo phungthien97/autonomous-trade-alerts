@@ -77,15 +77,24 @@ def load_active(path: Path) -> ActiveSelection | None:
     return ActiveSelection.from_dict(raw)
 
 
-def clear_exit_only_if_flat(active: ActiveSelection, symbol: str, shares: float) -> bool:
-    """Clear exit_only when position is flat. Returns True if mutated."""
+def prune_exit_only_if_flat(active: ActiveSelection, symbol: str, shares: float) -> bool:
+    """Remove an exit-only symbol once flat (investigation §12.13).
+
+    Returns True if the active list was mutated. Prefer this over merely
+    clearing the flag — a cleared-but-still-listed name can BUY again.
+    """
     row = active.get(symbol)
     if row is None or not row.exit_only:
         return False
     if float(shares) > 0:
         return False
-    row.exit_only = False
+    active.symbols = [s for s in active.symbols if s.symbol != symbol]
     return True
+
+
+def clear_exit_only_if_flat(active: ActiveSelection, symbol: str, shares: float) -> bool:
+    """Backward-compatible alias for :func:`prune_exit_only_if_flat`."""
+    return prune_exit_only_if_flat(active, symbol, shares)
 
 
 def clear_awaiting_first_buy(active: ActiveSelection, symbol: str) -> bool:
@@ -95,3 +104,18 @@ def clear_awaiting_first_buy(active: ActiveSelection, symbol: str) -> bool:
         return False
     row.awaiting_first_buy = False
     return True
+
+
+def reconcile_awaiting_first_buy(
+    active: ActiveSelection,
+    shares_by_symbol: dict[str, float],
+) -> bool:
+    """Clear awaiting_first_buy when broker/local shares show already long."""
+    dirty = False
+    for row in active.symbols:
+        if not row.awaiting_first_buy:
+            continue
+        if float(shares_by_symbol.get(row.symbol, 0.0) or 0.0) > 1e-9:
+            row.awaiting_first_buy = False
+            dirty = True
+    return dirty

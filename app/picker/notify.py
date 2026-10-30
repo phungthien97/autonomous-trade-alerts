@@ -167,5 +167,27 @@ def build_success_email_subject(
     return f"{prefix} Mon apply: {names}"
 
 
+def build_skip_email_body(*, recent_run: str, within_days: int, next_hint: str) -> str:
+    return (
+        "\n".join(
+            [
+                "PICKER ranking SKIPPED — biweekly window",
+                "",
+                "What this means",
+                "  The Saturday timer fired, but a successful ranking is still",
+                f"  inside the every-other-Saturday skip window (≤{within_days} days).",
+                "  pending_selection was NOT overwritten — current sleeves stay as-is.",
+                "",
+                "Details",
+                f"  Recent run file: {recent_run}",
+                f"  Next expected rank: {next_hint}",
+                "",
+                "Force a run: PICKER_FORCE=1 or python -m app.picker_rank --force",
+            ]
+        )
+        + "\n"
+    )
+
+
 def send_picker_email(subject: str, body: str) -> bool:
     return send_signal_email(subject, body)

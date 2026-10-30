@@ -160,29 +160,35 @@ def main(argv: list[str] | None = None) -> int:
         if not dry_run:
             snap = broker.get_account_snapshot()
             equity = float(snap.equity_usd)
-            # After flatten, spendable ≈ cash (same-day AF only if still flat).
-            avail = float(snap.spendable_usd)
-            left = {s: q for s, q in broker.get_positions().items() if q > 1e-9 and s in symbols}
+            # After flatten, spendable_usd is the USD pool for equal share sizing.
+            avail_usd = float(snap.spendable_usd)
+            left = {s: q for s, q in broker.get_positions().items() if q > 1e-9}
             if left:
                 raise RuntimeError(f"still long after flatten: {left}")
-            sleeve = plan.sleeve_cash
-            # Recompute from post-flatten never-borrow spendable + current prices.
             from app.live.paper_reset import redistribute_sleeve_cash
 
-            if prices:
-                sleeve = redistribute_sleeve_cash(symbols, prices, avail)
+            # Equal native (CAD) labels for the dashboard; buys use trading budget.
+            sleeve = redistribute_sleeve_cash(symbols, prices, equity)
             apply_state_reset(
                 paths,
                 symbols=symbols,
                 total_cash=equity,
                 sleeve_cash=sleeve,
                 use_account_cash=True,
+                trading_budget_usd=avail_usd,
             )
             print(
                 f"state reset ok total_cash={equity:.2f} "
-                f"spendable={avail:.2f} cash={float(snap.cash_usd):.2f}"
+                f"trading_budget_usd={avail_usd:.2f} "
+                f"spendable_usd={avail_usd:.2f} cash={float(snap.cash_usd):.2f} "
+                f"fx={snap.usd_cad_rate} account_ccy={snap.account_currency}"
             )
             print(f"sleeve_cash={{{', '.join(f'{k}: {v:.2f}' for k, v in sleeve.items())}}}")
+            if avail_usd <= 0 and str(snap.account_currency or "").upper() not in {"USD", ""}:
+                print(
+                    "WARNING: spendable_usd is 0 after flatten — buys will stay blocked "
+                    "until IBKR FX rates are present"
+                )
         else:
             print("dry-run: skipped flatten fills + state write")
     finally:

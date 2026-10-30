@@ -7,6 +7,8 @@ from app.picker.active import (
     clear_awaiting_first_buy,
     clear_exit_only_if_flat,
     load_active,
+    prune_exit_only_if_flat,
+    reconcile_awaiting_first_buy,
     save_active,
 )
 from app.picker.apply import ApplyResult, apply_pending_selection, maybe_apply_pending
@@ -35,7 +37,11 @@ from app.picker.pending import (
 from app.picker.rank import SelectedSymbol, select_symbols
 from app.picker.rank_symbol import SymbolRankResult, rank_one_symbol
 from app.picker.score import SymbolScore, score_symbol_series
-from app.picker.sizing import allocate_priority_sleeves, sleeve_buy_budget
+from app.picker.sizing import (
+    allocate_priority_sleeves,
+    resolve_equal_buy_cash_cap,
+    sleeve_buy_budget,
+)
 from app.picker.soft_rotate import SoftRotateFlags, SoftRotatePlan, plan_soft_rotate
 from app.picker.sp500 import (
     Sp500Constituent,
@@ -87,6 +93,8 @@ __all__ = [
     "apply_to_paper_v2",
     "clear_awaiting_first_buy",
     "clear_exit_only_if_flat",
+    "prune_exit_only_if_flat",
+    "reconcile_awaiting_first_buy",
     "evaluate_fetch_failures",
     "fetch_symbol_with_retries",
     "fetch_universe_bars",
@@ -113,6 +121,7 @@ __all__ = [
     "score_symbol_series",
     "select_symbols",
     "allocate_priority_sleeves",
+    "resolve_equal_buy_cash_cap",
     "sleeve_buy_budget",
     "sma",
 ]

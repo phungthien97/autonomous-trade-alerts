@@ -136,18 +136,38 @@ Guard: `app/broker/gateway.py` (`BrokerGateway`).
 
 ## 4. How a BUY quantity is chosen
 
+**Long-term contract (live, `use_account_cash`):**
+
+- **Trading budget (USD wallet)** on the dashboard caps how much of the IBKR account the bot may deploy. Deposits do **not** auto-enlarge the book; raise the budget manually.
+- **Save budget** (type `REBALANCE`): equalizes each active non-`exit_only` sleeve to `budget_usd / N` (SELL overweight, BUY underweight). Buys respect **SMA20**; US RTH only; briefly stops `live-worker` during orders; never borrow. Cash-out without equalizing: **Reduce** (pro-rata sells only) → withdraw in IBKR.
+- Buy pool (signal-driven entries between rebalances) = unused wallet minus USD **reserved** to top underweight longs up to `budget/N`, then split among flats (also capped at `budget/N`). Missing FX → spendable 0 → block buys.
+- **Equal among remaining flats** on that pool (+ **1-share stretch** if equal slot &lt; price but pool can afford 1 share).
+- After a BUY is live, `n_long` reserves the sleeve so same-cycle peers stay even on the refreshed pool.
+- **Picker top-down** chooses *which* names are in the book; dollars come from the budget pool.
+
 ```mermaid
 flowchart LR
-  Sig[BUY signal] --> Budget["spendable = min(IBKR AvailableFunds, book total_cash)"]
-  Budget --> Split["sleeve_buy_budget =<br/>spendable / remaining flat active sleeves"]
-  Split --> Qty["whole-share qty = floor(budget / price)"]
+  Sig[BUY signal] --> Pool["min unused_budget spendable_usd"]
+  Pool --> Split["equal = pool / remaining flats"]
+  Split --> Afford{"floor equal/price >= 1?"}
+  Afford -->|yes| Cap[use equal cap]
+  Afford -->|"no but price <= pool"| Stretch["stretch cap to 1 share"]
+  Afford -->|"price > pool"| Skip[skip zero qty]
+  Cap --> Qty["whole-share qty"]
+  Stretch --> Qty
   Qty --> Fees["estimate IBKR Tiered fees"]
   Fees --> Borrow{"would create debit?"}
   Borrow -->|yes| Shrink[shrink qty or abort]
   Borrow -->|no| Intent[OrderIntent]
 ```
 
-There is **no forced Monday rebalance**. Existing longs stay until a SELL signal; new names buy only when their BUY fires and cash is free.
+Helpers: `app/live/budget.py` (`plan_rebalance_to_equal`, reduce), `resolve_equal_buy_cash_cap` in `app/picker/sizing.py`. Controls: `set_trading_budget_usd` / `execute_rebalance_to_equal` / `execute_reduce_to_budget`.
+
+### Capital ops (deposit / cash-out)
+
+- **Deposit / equalize:** money sits at IBKR → set **trading budget** → type `REBALANCE` → **Save budget** during RTH (equal sleeves; SMA20-gated buys).
+- **Cash-out (no equal buys):** lower budget → Preview/Execute **Reduce** (type `REDUCE`) → withdraw freed cash in IBKR → leave budget low.
+- **Urgent:** Disable trading → budget 0 → Execute reduce (flatten) during RTH → withdraw. Bank credit is still IBKR/bank timing.
 
 ---
 
@@ -187,13 +207,15 @@ flowchart TD
   P["pending symbols"] --> Diff["plan_soft_rotate vs active"]
   Diff --> Keep["Kept: normal trading"]
   Diff --> Add["Added: awaiting_first_buy<br/>SMA20 before first BUY"]
-  Diff --> Drop["Dropped: exit_only<br/>no new BUY; sell when signal fires"]
+  Diff --> Drop["Dropped: exit_only<br/>no new BUY; sell when signal fires<br/>prune from book once flat"]
   Keep --> Write["Write live + V1 + V2 configs<br/>+ active_selection.json<br/>mark pending applied"]
   Add --> Write
   Drop --> Write
 ```
 
-Files: `app/picker/apply.py`, `soft_rotate.py`, `apply_live.py`, `apply_paper.py`.
+Files: `app/picker/apply.py`, `soft_rotate.py`, `apply_live.py`, `apply_paper.py`, `active.py` (`prune_exit_only_if_flat`).
+
+**Save & rebalance vs soft-rotate:** rebalance targets **non-exit-only** actives only. Capital stuck in exit-only drops is freed by a strategy SELL (or dashboard **Reduce**), not by Save & rebalance.
 
 ---
 
@@ -275,7 +297,7 @@ Disconnect emails are cooldown-suppressed (~6h) so Gateway flaps do not spam.
 1. **Whole shares** on IBKR — no fractional API orders.  
 2. **Never borrow** — buys sized to `AvailableFunds`, not BuyingPower.  
 3. **All-in / all-out per sleeve** — not partial target weights.  
-4. **No forced Monday rebalance** — picker soft-rotates; sells wait for signals.  
+4. **No forced Monday rebalance** — picker soft-rotates; sells wait for signals. **Save & rebalance** equalizes active sleeves only — it does not liquidate `exit_only` drops (use Reduce or wait for SELL). Dropped names are **removed from the live book once flat**.  
 5. **Picker abort** if &gt;30% IBKR bar fetches fail — previous pending kept.  
 6. **Hybrid B** — sleeve must beat B&amp;H **and** make money; ranked by strategy profit.  
 7. **Live money** only after G3 graduation + explicit `LIVE_TRADING_CONFIRM=YES`.
@@ -318,7 +340,8 @@ sequenceDiagram
 | Which stocks? | `app/picker/run.py`, `app/picker/rank.py` |
 | Soft rotate | `app/picker/soft_rotate.py`, `app/picker/apply.py` |
 | First-buy SMA | `app/picker/trend_gate.py` |
-| Equal cash sleeves | `app/picker/sizing.py` |
+| Trading budget + reduce | `app/live/budget.py`, `app/live/control.py` |
+| Equal cash + 1-share stretch | `app/picker/sizing.py` (`resolve_equal_buy_cash_cap`) |
 | Paper loop | `app/worker.py` |
 | Remote UI | `app/dashboard.py`, `app/remote/ui.py` |
 

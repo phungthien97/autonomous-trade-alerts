@@ -103,7 +103,11 @@ def apply_pending_selection(
     live_total = None
     if live_paths.config_path.is_file():
         try:
-            live_total = float(load_live_config(live_paths.config_path).total_cash)
+            live_cfg = load_live_config(live_paths.config_path)
+            if live_cfg.trading_budget_usd is not None:
+                live_total = float(live_cfg.trading_budget_usd)
+            else:
+                live_total = float(live_cfg.total_cash)
         except (OSError, TypeError, ValueError, KeyError):
             live_total = None
     apply_allocated_cash_to_live_state(

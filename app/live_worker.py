@@ -21,24 +21,33 @@ from app.broker.memory import InMemoryBroker
 from app.fees import default_ibkr_us_stock_schedule
 from app.broker.gateway import BrokerGateway
 from app.live.config import bootstrap_live_state, load_live_config, save_live_config
-from app.live.executor import execute_intent
+from app.live.executor import execute_intent, flush_pending_queue
 from app.notifier import clear_alert_cooldown, notify_live_event
 from app.live.idempotency import IdempotencyStore
 from app.live.modes import TradingMode, parse_mode
 from app.live.planner import plan_from_signal
-from app.live.queue import PendingIntentStore
+from app.live.queue import PendingIntent, PendingIntentStore
 from app.live.reconcile import LocalSleeveState, reconcile
 from app.live.session import is_us_equity_rth
 from app.paths import LivePaths, PickerPaths, StatePaths
 from app.picker.active import (
     clear_awaiting_first_buy,
-    clear_exit_only_if_flat,
     load_active,
+    prune_exit_only_if_flat,
+    reconcile_awaiting_first_buy,
     save_active,
 )
 from app.picker.apply import maybe_apply_pending
+from app.picker.apply_live import remove_symbol_from_live_config
 from app.live.account_nav import upsert_account_nav
-from app.picker.sizing import sleeve_buy_budget
+from app.live.budget import (
+    effective_buy_pool,
+    equal_sleeve_target_usd,
+    flat_buy_pool_usd,
+    invested_usd,
+    unused_budget,
+)
+from app.picker.sizing import resolve_equal_buy_cash_cap
 from app.picker.trend_gate import allow_first_buy, sma
 from app.risk.escalate import RiskController
 from app.strategy import StrategyState, portfolio_value, step_signal
@@ -271,6 +280,65 @@ def run_live_once(
     queue = PendingIntentStore(paths.queue_path)
     active_dirty = False
 
+    # Stale awaiting_first_buy: already long at broker → treat as entered.
+    broker_pos = broker.get_positions()
+    share_map = {
+        str(k).upper(): float(v)
+        for k, v in {**report.corrected.shares, **broker_pos}.items()
+    }
+    if active is not None and reconcile_awaiting_first_buy(active, share_map):
+        active_dirty = True
+        active_flags = {row.symbol: row for row in active.symbols}
+
+    # Flush parked outside-RTH intents once the session is open.
+    if rth_ok:
+
+        def _queue_gate(row: PendingIntent) -> str | None:
+            flags = active_flags.get(row.symbol) or active_flags.get(str(row.symbol).upper())
+            if row.side == "BUY" and flags is not None and flags.exit_only:
+                return "exit_only"
+            if row.side == "BUY" and flags is not None and flags.awaiting_first_buy:
+                history = closes_by_symbol.get(row.symbol) or closes_by_symbol.get(
+                    str(row.symbol).upper()
+                ) or []
+                px = float(price_by_symbol.get(row.symbol) or price_by_symbol.get(str(row.symbol).upper()) or 0.0)
+                if px <= 0 or not allow_first_buy(history, price=px):
+                    return "sma20_gate"
+            return None
+
+        flushed = flush_pending_queue(
+            queue,
+            broker=broker,
+            idempotency=idem,
+            audit=audit,
+            mode=config.mode,
+            allow_side=_queue_gate,
+        )
+        for row in flushed:
+            actions.append(f"queue:{row.get('symbol')}:{row.get('status')}")
+        if flushed:
+            # Refresh after possible fills before the per-symbol loop.
+            report = reconcile(
+                LocalSleeveState(
+                    cash=float(broker.get_account_snapshot().cash_usd),
+                    shares={
+                        symbol: float(broker.get_positions().get(symbol, 0.0))
+                        for symbol in config.symbols
+                    },
+                ),
+                broker,
+            )
+            raw["cash_usd"] = report.corrected.cash
+            snapshot = broker.get_account_snapshot()
+
+    # Seed trading budget once from spendable USD (wallet); never auto-track equity.
+    if config.use_account_cash and config.trading_budget_usd is None:
+        seed = max(0.0, float(snapshot.spendable_usd))
+        if seed > 0:
+            config.trading_budget_usd = seed
+            save_live_config(paths.config_path, config)
+            print(f"seeded trading_budget_usd={seed:.2f} from spendable_usd")
+
     n_active = sum(1 for row in (active.symbols if active else []) if not row.exit_only) or len(
         [a for a in config.assets if a.enabled]
     )
@@ -401,20 +469,79 @@ def run_live_once(
             )
 
         buy_cap = None
+        allow_frac = bool(
+            config.allow_fractional_default and broker.supports_fractional(symbol)
+        )
         if signal == "BUY":
             if config.use_account_cash:
-                # Real funded-account mode: split never-borrow spendable among
-                # flat sleeves. spendable caps AvailableFunds at cash while long
-                # so margin against open stock cannot inflate ticket size.
-                pool = max(0.0, float(snapshot.spendable_usd))
-                buy_cap = sleeve_buy_budget(pool, n_active, n_long)
+                # Wallet pool for flats: unused minus USD reserved to top
+                # underweight longs up to budget/N, then equal among flats
+                # (+ 1-share stretch). Missing FX → 0.
+                live_pos = broker.get_positions()
+                marks = dict(price_by_symbol)
+                price_book = getattr(broker, "inner", broker)
+                if hasattr(price_book, "last_prices"):
+                    for k, v in (price_book.last_prices or {}).items():
+                        marks.setdefault(k, float(v))
+                invested = invested_usd(live_pos, marks)
+                active_syms = [
+                    a.symbol
+                    for a in config.assets
+                    if a.enabled and not (active_flags.get(a.symbol) and active_flags[a.symbol].exit_only)
+                ] or list(config.symbols)
+                pool = flat_buy_pool_usd(
+                    config.trading_budget_usd,
+                    symbols=active_syms,
+                    positions=live_pos,
+                    prices=marks,
+                    invested_usd=invested,
+                    spendable_usd=float(snapshot.spendable_usd),
+                )
+                acct_ccy = str(getattr(snapshot, "account_currency", "") or "").upper()
+                if pool <= 0 and acct_ccy not in {"USD", ""} and float(snapshot.spendable_usd) <= 0:
+                    print(
+                        f"{symbol}: BUY blocked — {acct_ccy} account has no IBKR FX "
+                        f"path to USD (refusing {acct_ccy}-as-USD sizing)"
+                    )
+                elif pool <= 0 and config.trading_budget_usd is not None:
+                    print(
+                        f"{symbol}: BUY blocked — unused trading budget is 0 "
+                        f"(budget={float(config.trading_budget_usd):.2f} invested={invested:.2f})"
+                    )
+                buy_cap = resolve_equal_buy_cash_cap(
+                    pool,
+                    n_active_non_exit_only=n_active,
+                    n_already_long=n_long,
+                    price=price,
+                    allow_fractional=allow_frac,
+                )
+                # Never size a flat signal buy above equal sleeve target.
+                if config.trading_budget_usd is not None and n_active > 0:
+                    buy_cap = min(
+                        float(buy_cap),
+                        equal_sleeve_target_usd(float(config.trading_budget_usd), n_active),
+                    )
             else:
-                # Fixed paper book: only this sleeve's assigned cash.
+                # Fixed paper book: sleeve cash, else budget-clamped spendable.
                 sleeve_cash = max(0.0, float(before.cash))
                 buy_cap = sleeve_cash if sleeve_cash > 0 else None
                 if buy_cap is None:
-                    book = min(float(snapshot.spendable_usd), float(config.total_cash))
-                    buy_cap = sleeve_buy_budget(book, n_active, n_long)
+                    live_pos = broker.get_positions()
+                    invested = invested_usd(live_pos, price_by_symbol)
+                    book = effective_buy_pool(
+                        config.trading_budget_usd
+                        if config.trading_budget_usd is not None
+                        else float(config.total_cash),
+                        invested_usd=invested,
+                        spendable_usd=float(snapshot.spendable_usd),
+                    )
+                    buy_cap = resolve_equal_buy_cash_cap(
+                        book,
+                        n_active_non_exit_only=n_active,
+                        n_already_long=n_long,
+                        price=price,
+                        allow_fractional=allow_frac,
+                    )
 
         intent, plan_why = plan_from_signal(
             symbol,
@@ -426,7 +553,7 @@ def run_live_once(
                 trough=before.trough,
             ),
             price,
-            config.allow_fractional_default and broker.supports_fractional(symbol),
+            allow_frac,
             snapshot,
             fee_schedule,
             bar_ts_by_symbol.get(symbol, now_utc.isoformat()),
@@ -579,15 +706,29 @@ def run_live_once(
             # otherwise the next hourly bar can sell the same long again and go short.
             if intent.side == "SELL" and result.status in {"submitted", "filled", "partial"}:
                 exit_pending = True
+            # Reserve this sleeve in the equal-split denominator as soon as a BUY
+            # is live at the broker. Waiting for fill + awaiting_first_buy clear
+            # left n_long stuck, so later same-cycle buys got spendable/n_flat
+            # after cash already dropped → undersized sleeves.
+            if intent.side == "BUY" and result.status in {"submitted", "filled", "partial"}:
+                n_long += 1
         saved = probe if (signal is None or filled) else before
         if filled:
             saved.shares = float(broker.get_positions().get(symbol, saved.shares))
             saved.cash = 0.0 if saved.shares > 0 and signal == "BUY" else snapshot.cash_usd
             if active is not None and signal == "BUY" and clear_awaiting_first_buy(active, symbol):
                 active_dirty = True
-                n_long += 1
-            if active is not None and signal == "SELL" and clear_exit_only_if_flat(active, symbol, saved.shares):
+            if (
+                active is not None
+                and signal == "SELL"
+                and prune_exit_only_if_flat(active, symbol, saved.shares)
+            ):
                 active_dirty = True
+                updated = remove_symbol_from_live_config(paths.config_path, symbol)
+                if updated is not None:
+                    config = updated
+                assets.pop(symbol, None)
+                active_flags = {row.symbol: row for row in active.symbols}
         if exit_pending:
             # Optimistically flat locally so strategy cannot re-fire a full-size SELL.
             saved = StrategyState(
@@ -604,6 +745,8 @@ def run_live_once(
             "last_price": price,
             "exit_pending": bool(exit_pending),
         }
+        history = closes_by_symbol.get(symbol) or []
+        sma20_val = sma(history) if history else None
         decisions.append(
             {
                 "symbol": symbol,
@@ -617,6 +760,7 @@ def run_live_once(
                 "trough": saved.trough,
                 "rth_ok": rth_ok,
                 "gate": gate_reason,
+                "sma20": round(float(sma20_val), 4) if sma20_val is not None else None,
             }
         )
         _append_equity(
@@ -653,19 +797,51 @@ def run_live_once(
                 assets[symbol]["shares"] = max(0.0, sh)
                 if sh <= 1e-9:
                     assets[symbol]["exit_pending"] = False
-        if active is not None and clear_exit_only_if_flat(active, symbol, max(0.0, sh)):
+        if active is not None and prune_exit_only_if_flat(active, symbol, max(0.0, sh)):
             active_dirty = True
+            updated = remove_symbol_from_live_config(paths.config_path, symbol)
+            if updated is not None:
+                config = updated
+            assets.pop(symbol, None)
+            active_flags = {row.symbol: row for row in active.symbols}
 
-    # Raw AF kept for logging; buy sizing / sleeve park use never-borrow spendable.
+    # Raw AF kept for logging. Buy path uses trading_budget + spendable_usd.
     raw_af = getattr(end_snapshot, "available_funds_usd", None)
-    spendable = max(0.0, float(end_snapshot.spendable_usd))
+    spendable_native = max(
+        0.0,
+        float(getattr(end_snapshot, "spendable_native", None) or end_snapshot.spendable_usd),
+    )
+    spendable_usd = max(0.0, float(end_snapshot.spendable_usd))
+    end_pos = broker.get_positions()
+    end_marks = dict(price_by_symbol)
+    for sym, row in assets.items():
+        lp = row.get("last_price")
+        if lp is not None and sym not in end_marks:
+            try:
+                end_marks[sym] = float(lp)
+            except (TypeError, ValueError):
+                pass
+    end_invested = invested_usd(end_pos, end_marks)
     if config.use_account_cash:
-        # Book capital tracks full account equity; idle cash is split across flat sleeves.
-        # Long sleeves keep cash at 0 so the dashboard does not show stale "half cash".
+        # NAV display only — do NOT set trading_budget from equity (deposits
+        # must not auto-enlarge the wallet). Park unused budget (native) on
+        # flat sleeves for dashboard labels; longs keep cash at 0.
         equity = float(getattr(end_snapshot, "equity_usd", 0.0) or 0.0)
         if equity > 0:
-            config.total_cash = equity
+            config.total_cash = equity  # account NAV mirror, not buy ceiling
             save_live_config(paths.config_path, config)
+        unused_usd = (
+            unused_budget(float(config.trading_budget_usd), end_invested)
+            if config.trading_budget_usd is not None
+            else 0.0
+        )
+        # Convert unused USD → native for sleeve labels when CAD/BASE account.
+        rate = getattr(end_snapshot, "usd_cad_rate", None)
+        if rate is not None and float(rate) > 0:
+            unused_native = unused_usd * float(rate)
+        else:
+            unused_native = unused_usd
+        unused_native = min(unused_native, spendable_native)
         flat_syms: list[str] = []
         for sym in config.symbols:
             row = assets.setdefault(
@@ -676,14 +852,27 @@ def run_live_once(
                 row["cash"] = 0.0
             elif not (active_flags.get(sym) and active_flags[sym].exit_only):
                 flat_syms.append(sym)
-        if flat_syms and spendable > 0:
-            each = spendable / float(len(flat_syms))
+        if flat_syms and unused_native > 0:
+            each = unused_native / float(len(flat_syms))
             for sym in flat_syms:
                 assets[sym]["cash"] = each
+        elif flat_syms:
+            for sym in flat_syms:
+                assets[sym]["cash"] = 0.0
 
     raw["assets"] = assets
-    raw["available_funds_usd"] = float(raw_af) if raw_af is not None else spendable
-    raw["spendable_usd"] = spendable
+    raw["available_funds_usd"] = float(raw_af) if raw_af is not None else spendable_native
+    raw["spendable_usd"] = spendable_usd
+    raw["trading_budget_usd"] = (
+        float(config.trading_budget_usd) if config.trading_budget_usd is not None else None
+    )
+    raw["invested_usd"] = end_invested
+    raw["account_currency"] = str(getattr(end_snapshot, "account_currency", None) or "USD")
+    rate = getattr(end_snapshot, "usd_cad_rate", None)
+    raw["usd_cad_rate"] = float(rate) if rate is not None else None
+    fx_map = getattr(end_snapshot, "fx_rates", None)
+    if isinstance(fx_map, dict) and fx_map:
+        raw["fx_rates"] = {str(k).upper(): float(v) for k, v in fx_map.items() if float(v) > 0}
     equity_for_nav = float(getattr(end_snapshot, "equity_usd", 0.0) or 0.0)
     if equity_for_nav <= 0 and config.use_account_cash:
         equity_for_nav = float(config.total_cash or 0.0)
@@ -705,6 +894,11 @@ def run_live_once(
         "cash_usd": raw.get("cash_usd"),
         "available_funds_usd": raw.get("available_funds_usd"),
         "spendable_usd": raw.get("spendable_usd"),
+        "trading_budget_usd": raw.get("trading_budget_usd"),
+        "invested_usd": raw.get("invested_usd"),
+        "account_currency": raw.get("account_currency"),
+        "usd_cad_rate": raw.get("usd_cad_rate"),
+        "fx_rates": raw.get("fx_rates"),
         "trading_enabled": True,
         "use_account_cash": config.use_account_cash,
         "book_equity": config.total_cash if config.use_account_cash else None,
@@ -906,6 +1100,11 @@ def main(argv: list[str] | None = None) -> int:
                 "cash_usd": summary.get("cash_usd"),
                 "available_funds_usd": summary.get("available_funds_usd"),
                 "spendable_usd": summary.get("spendable_usd"),
+                "trading_budget_usd": summary.get("trading_budget_usd"),
+                "invested_usd": summary.get("invested_usd"),
+                "account_currency": summary.get("account_currency"),
+                "usd_cad_rate": summary.get("usd_cad_rate"),
+                "fx_rates": summary.get("fx_rates"),
                 "actions": summary.get("actions", []),
                 "decisions": summary.get("decisions", []),
                 "skipped": summary.get("skipped"),

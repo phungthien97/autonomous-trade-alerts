@@ -273,10 +273,17 @@ def position_rows(
     available_cash: float | None = None,
     cycle_reasons: dict[str, str] | None = None,
     orders_today_by_symbol: dict[str, int] | None = None,
+    trading_budget_usd: float | None = None,
+    sma20_by_symbol: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Enrich positions with mkt_value, weight_pct, and buy/sell distance cues."""
     flags = {str(row.get("symbol")): row for row in (picker_active or []) if row.get("symbol")}
     reasons = {str(k): str(v) for k, v in (cycle_reasons or {}).items() if v}
+    sma20_map = {
+        str(k).upper(): float(v)
+        for k, v in (sma20_by_symbol or {}).items()
+        if v is not None
+    }
     orders_by_sym = {
         str(k): int(v)
         for k, v in (orders_today_by_symbol or {}).items()
@@ -284,9 +291,26 @@ def position_rows(
     }
     total = float(nav) if nav and nav > 0 else book_nav(positions)
     flat_n = sum(1 for row in (positions or []) if float(row.get("shares") or 0.0) <= 0)
+    # Equal-sleeve target for dashboard copy (budget / N non-exit_only).
+    equal_target = None
+    if use_account_cash and trading_budget_usd is not None and float(trading_budget_usd) > 0:
+        n_eq = 0
+        for prow in positions or []:
+            psym = str(prow.get("symbol") or "")
+            pflag = flags.get(psym) if psym else None
+            if pflag and pflag.get("exit_only"):
+                continue
+            n_eq += 1
+        if n_eq <= 0:
+            n_eq = len(positions or [])
+        if n_eq > 0:
+            equal_target = float(trading_budget_usd) / float(n_eq)
     buy_budget = None
     if use_account_cash and available_cash is not None and flat_n > 0:
+        # available_cash is already flat_buy_pool (underweight longs reserved).
         buy_budget = max(0.0, float(available_cash)) / float(flat_n)
+        if equal_target is not None:
+            buy_budget = min(buy_budget, float(equal_target))
 
     out: list[dict[str, Any]] = []
     for row in positions or []:
@@ -347,6 +371,8 @@ def position_rows(
                 "sleeve_total": round(sleeve_value, 2),
                 "buy_budget": sleeve_budget,
                 "planned_shares": planned_shares,
+                "equal_target_usd": round(equal_target, 2) if equal_target is not None else None,
+                "sma20": round(sma20_map[sym], 4) if sym in sma20_map else None,
                 "weight_pct": round(weight, 1) if weight is not None else None,
                 "to_sell_pct": round(to_sell, 1) if to_sell is not None else None,
                 "to_buy_pct": round(to_buy, 1) if to_buy is not None else None,
@@ -445,11 +471,23 @@ def live_money_snapshot(
     available_funds: float | None = None,
     broker_stock_value: float | None = None,
     broker_accrued_cash: float | None = None,
+    account_currency: str | None = None,
+    usd_cad_rate: float | None = None,
+    fx_rates: dict[str, float] | None = None,
+    trading_budget_usd: float | None = None,
     cycle_reasons: dict[str, str] | None = None,
     orders_today_by_symbol: dict[str, int] | None = None,
+    sma20_by_symbol: dict[str, float] | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Assemble Live-tab money hero + holdings from files (and optional equity.csv)."""
+    from app.live.budget import (
+        effective_buy_pool,
+        flat_buy_pool_usd,
+        unused_budget,
+        withdrawable_cash_usd,
+    )
+
     start = float(total_cash) if total_cash is not None else None
     book_positions = filter_book_positions(
         positions,
@@ -457,16 +495,17 @@ def live_money_snapshot(
         picker_active=picker_active,
     )
     spendable_for_buys: float | None = None
+    spendable_for_shares: float | None = None
     accrued: float | None = (
         float(broker_accrued_cash) if broker_accrued_cash is not None else None
     )
     if use_account_cash:
-        from app.account_snapshot import compute_spendable
+        from app.account_snapshot import compute_spendable, to_usd
 
         # Paper IBKR base currency may be CAD. Prefer broker tags in that currency:
         # NetLiquidation, TotalCashValue, GrossPositionValue, AccruedCash.
         # Do NOT use equity − cash for "stocks" — that residual is often AccruedCash
-        # (interest), not share holdings.
+        # (interest), not share holdings. Keep native CAD for Day P&L continuity.
         if broker_equity is not None and float(broker_equity) > 0:
             nav = float(broker_equity)
         elif start is not None and start > 0:
@@ -492,7 +531,7 @@ def live_money_snapshot(
             if nav <= 0:
                 nav = invested + cash + (accrued or 0.0)
         # Never-borrow: while long, do not size off AvailableFunds > cash
-        # (that gap is margin against open stock).
+        # (that gap is margin against open stock). Native account currency.
         if broker_cash is not None or available_funds is not None:
             gross_for_spend = (
                 float(broker_stock_value)
@@ -503,6 +542,13 @@ def live_money_snapshot(
                 float(broker_cash) if broker_cash is not None else 0.0,
                 float(available_funds) if available_funds is not None else None,
                 gross_for_spend,
+            )
+            # Planned share counts need USD (US equity prices).
+            spendable_for_shares = to_usd(
+                spendable_for_buys,
+                account_currency=str(account_currency or "USD"),
+                usd_cad_rate=usd_cad_rate,
+                fx_rates=fx_rates,
             )
     else:
         cash, invested = cash_and_invested(book_positions)
@@ -575,21 +621,97 @@ def live_money_snapshot(
         if day_delta is not None and nav > 0 and day_delta_pct is None:
             day_delta_pct = (day_delta / nav) * 100.0
 
+    # USD mark of longs for budget math (US equity prices).
+    invested_usd_marks = 0.0
+    for row in book_positions:
+        shares = float(row.get("shares") or 0.0)
+        px = row.get("last_price")
+        if px is None:
+            px = row.get("price")
+        if shares > 0 and isinstance(px, (int, float)) and float(px) > 0:
+            invested_usd_marks += shares * float(px)
+
+    buy_pool_usd = None
+    unused_usd = None
+    withdrawable_usd = None
+    if use_account_cash and spendable_for_shares is not None:
+        # Raw unused (budget - invested), for metrics.
+        unused_raw = effective_buy_pool(
+            trading_budget_usd,
+            invested_usd=invested_usd_marks,
+            spendable_usd=float(spendable_for_shares),
+        )
+        pos_map = {
+            str(r.get("symbol") or "").upper(): float(r.get("shares") or 0.0)
+            for r in book_positions
+            if r.get("symbol")
+        }
+        px_map: dict[str, float] = {}
+        for r in book_positions:
+            sym = str(r.get("symbol") or "").upper()
+            if not sym:
+                continue
+            px = r.get("last_price")
+            if px is None:
+                px = r.get("price")
+            if isinstance(px, (int, float)) and float(px) > 0:
+                px_map[sym] = float(px)
+        syms = [str(r.get("symbol")).upper() for r in book_positions if r.get("symbol")]
+        if picker_active:
+            # Prefer non-exit_only active list order when present.
+            syms = [
+                str(r.get("symbol")).upper()
+                for r in picker_active
+                if r.get("symbol") and not r.get("exit_only")
+            ] or syms
+        # Flat signal buys reserve underweight long gaps (e.g. P at 70k of 100k).
+        buy_pool_usd = flat_buy_pool_usd(
+            trading_budget_usd,
+            symbols=syms,
+            positions=pos_map,
+            prices=px_map,
+            invested_usd=invested_usd_marks,
+            spendable_usd=float(spendable_for_shares),
+        ) if trading_budget_usd is not None else unused_raw
+        if trading_budget_usd is not None:
+            unused_usd = unused_budget(float(trading_budget_usd), invested_usd_marks)
+            withdrawable_usd = withdrawable_cash_usd(
+                cash_usd=float(spendable_for_shares),
+                budget_usd=float(trading_budget_usd),
+                invested_usd=invested_usd_marks,
+            )
+
     holdings = position_rows(
         book_positions,
         nav=nav,
         picker_active=picker_active,
         use_account_cash=use_account_cash,
-        available_cash=spendable_for_buys if use_account_cash else None,
+        available_cash=buy_pool_usd if use_account_cash else None,
         cycle_reasons=cycle_reasons,
         orders_today_by_symbol=orders_today_by_symbol,
+        trading_budget_usd=trading_budget_usd,
+        sma20_by_symbol=sma20_by_symbol,
     )
+    # Live IBKR Canada paper is CAD; never invent USD when the broker tag is missing.
+    if account_currency:
+        ccy = str(account_currency).upper()
+        if ccy == "BASE":
+            ccy = "CAD"
+    else:
+        ccy = "CAD" if use_account_cash else "USD"
     return {
         "nav": nav,
         "cash": cash,
         "invested": invested,
+        "invested_usd": invested_usd_marks,
         "accrued_cash": accrued,
         "available_funds": spendable_for_buys,
+        "spendable_usd": spendable_for_shares,
+        "trading_budget_usd": trading_budget_usd,
+        "unused_budget_usd": unused_usd,
+        "buy_pool_usd": buy_pool_usd,
+        "withdrawable_usd": withdrawable_usd,
+        "account_currency": ccy,
         "book_capital": start,
         "bot_return_pct": bot_return_pct,
         "day_delta": day_delta,

@@ -268,6 +268,27 @@ def test_account_mode_ignores_stale_long_sleeve_cash() -> None:
     assert by_sym["P"]["orders_today"] == 1
 
 
+def test_equal_target_usd_on_holdings() -> None:
+    from app.remote.money import position_rows
+
+    rows = position_rows(
+        [
+            {"symbol": "A", "shares": 10.0, "last_price": 50.0},
+            {"symbol": "B", "shares": 0.0, "last_price": 100.0},
+        ],
+        use_account_cash=True,
+        available_cash=0.0,
+        trading_budget_usd=200_000.0,
+        picker_active=[
+            {"symbol": "A", "buy_rise": 0.01, "sell_drop": 0.02},
+            {"symbol": "B", "buy_rise": 0.01, "sell_drop": 0.02},
+        ],
+    )
+    by = {r["symbol"]: r for r in rows}
+    assert by["A"]["equal_target_usd"] == pytest.approx(100_000.0)
+    assert by["B"]["equal_target_usd"] == pytest.approx(100_000.0)
+
+
 def test_account_mode_day_pnl_from_account_nav(tmp_path: Path) -> None:
     nav_path = tmp_path / "account_nav.csv"
     nav_path.write_text(

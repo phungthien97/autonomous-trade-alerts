@@ -67,6 +67,50 @@ def apply_to_live_config(
     return cfg
 
 
+def remove_symbol_from_live_config(config_path: Path, symbol: str) -> LiveConfig | None:
+    """Drop a pruned exit-only name from live ``symbols`` / ``assets``."""
+    sym = str(symbol).upper()
+    cfg_path = Path(config_path)
+    if not cfg_path.is_file():
+        return None
+    cfg = load_live_config(cfg_path)
+    new_symbols = [s for s in cfg.symbols if str(s).upper() != sym]
+    new_assets = [a for a in cfg.assets if str(a.symbol).upper() != sym]
+    if new_symbols == list(cfg.symbols) and len(new_assets) == len(cfg.assets):
+        return cfg
+    cfg.symbols = new_symbols
+    cfg.assets = new_assets
+    save_live_config(cfg_path, cfg)
+    return cfg
+
+
+def remove_symbol_from_live_book(config_path: Path, state_path: Path, symbol: str) -> bool:
+    """Drop a pruned exit-only name from live config + flat state row."""
+    sym = str(symbol).upper()
+    changed = remove_symbol_from_live_config(config_path, symbol) is not None
+    st_path = Path(state_path)
+    if not st_path.is_file():
+        return bool(changed)
+    raw = json.loads(st_path.read_text(encoding="utf-8"))
+    assets = raw.get("assets")
+    if not isinstance(assets, dict):
+        return bool(changed)
+    drop_keys = [k for k in assets if str(k).upper() == sym]
+    wrote = False
+    for k in drop_keys:
+        entry = assets.get(k) or {}
+        if float(entry.get("shares") or 0.0) > 1e-9:
+            continue
+        assets.pop(k, None)
+        wrote = True
+    if wrote:
+        raw["assets"] = assets
+        tmp = st_path.with_suffix(st_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(st_path)
+    return bool(changed or wrote)
+
+
 def apply_allocated_cash_to_live_state(
     state_path: Path,
     symbols: Sequence[PendingSymbol | dict],

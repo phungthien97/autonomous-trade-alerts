@@ -24,10 +24,13 @@ class LiveConfig:
     mode: TradingMode = TradingMode.live_dry_run
     symbols: list[str] = field(default_factory=list)
     total_cash: float = 1000.0
+    # Max USD the bot may keep invested (wallet). None = not seeded yet;
+    # worker seeds once from spendable_usd. Not auto-tracked to full equity.
+    trading_budget_usd: float | None = None
     assets: list[SymbolParams] = field(default_factory=list)
     trading_enabled: bool = True
-    # When True, size buys from IBKR AvailableFunds (whole account), not a
-    # separate paper "book" ceiling. Matches real funded-account use.
+    # When True, size buys from IBKR never-borrow cash (clamped by trading
+    # budget), not a fixed per-sleeve paper cash book.
     use_account_cash: bool = True
     # Max broker order submits per symbol per Eastern calendar day
     # (hard block for that symbol + one alert). Adjustable from the dashboard.
@@ -73,6 +76,7 @@ def _default_payload(project_root: Path | None = None) -> dict:
         "mode": cfg.mode.value,
         "symbols": cfg.symbols,
         "total_cash": cfg.total_cash,
+        "trading_budget_usd": cfg.trading_budget_usd,
         "assets": [asdict(asset) for asset in cfg.assets],
         "trading_enabled": cfg.trading_enabled,
         "use_account_cash": cfg.use_account_cash,
@@ -91,6 +95,7 @@ def save_live_config(path: Path, config: LiveConfig | None = None) -> None:
         "mode": cfg.mode.value if isinstance(cfg.mode, TradingMode) else str(cfg.mode),
         "symbols": list(cfg.symbols),
         "total_cash": cfg.total_cash,
+        "trading_budget_usd": cfg.trading_budget_usd,
         "assets": [asdict(asset) for asset in cfg.assets],
         "trading_enabled": cfg.trading_enabled,
         "use_account_cash": cfg.use_account_cash,
@@ -106,10 +111,13 @@ def load_live_config(path: Path) -> LiveConfig:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     assets = [SymbolParams(**row) for row in raw.get("assets", [])]
     symbols = list(raw.get("symbols") or [asset.symbol for asset in assets] or [])
+    budget_raw = raw.get("trading_budget_usd", None)
+    budget = float(budget_raw) if budget_raw is not None else None
     return LiveConfig(
         mode=parse_mode(raw.get("mode", TradingMode.live_dry_run.value)),
         symbols=symbols,
         total_cash=float(raw.get("total_cash", 1000.0)),
+        trading_budget_usd=budget,
         assets=assets,
         trading_enabled=bool(raw.get("trading_enabled", True)),
         use_account_cash=bool(raw.get("use_account_cash", True)),

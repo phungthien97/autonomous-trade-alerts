@@ -139,3 +139,8 @@ class PickerPaths:
     @property
     def ranking_runs_dir(self) -> Path:
         return self.state_dir / "ranking_runs"
+
+    @property
+    def last_rank_status_path(self) -> Path:
+        """Last timer outcome (ran / skipped) for dashboard + ops."""
+        return self.state_dir / "last_rank_status.json"

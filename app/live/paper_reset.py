@@ -18,9 +18,6 @@ from app.live.config import LiveConfig, load_live_config, save_live_config
 from app.live.queue import PendingIntentStore
 from app.live.session import is_us_equity_rth, next_rth_open
 from app.paths import LivePaths
-from app.picker.sizing import allocate_priority_sleeves
-
-
 @dataclass(frozen=True)
 class ResetPlan:
     symbols: list[str]
@@ -69,19 +66,16 @@ def redistribute_sleeve_cash(
     prices: Mapping[str, float],
     available_funds: float,
 ) -> dict[str, float]:
-    """Priority whole-share budgets across all symbols; equal split if no prices."""
+    """Equal cash labels across the live book (account-cash mode ignores these for sizing).
+
+    ``prices`` is accepted for API compat with older callers; equal split does not
+    use priority whole-share stretch (that path oversized some sleeves vs others).
+    """
+    del prices  # equal split; kept in signature for callers/tests
     syms = [str(s).strip() for s in symbols if str(s).strip()]
     if not syms:
         return {}
     pool = max(0.0, float(available_funds))
-    priced = {s: float(prices[s]) for s in syms if s in prices and float(prices[s]) > 0}
-    if len(priced) == len(syms):
-        allocs = allocate_priority_sleeves(syms, priced, pool, max_n=len(syms))
-        cash = {a.symbol: float(a.cash) for a in allocs}
-        # Any symbol skipped (should not happen when all priced) gets 0.
-        for s in syms:
-            cash.setdefault(s, 0.0)
-        return cash
     each = pool / float(len(syms))
     return {s: each for s in syms}
 
@@ -93,12 +87,15 @@ def apply_state_reset(
     total_cash: float,
     sleeve_cash: Mapping[str, float],
     use_account_cash: bool = True,
+    trading_budget_usd: float | None = None,
 ) -> LiveConfig:
     """Rewrite live config + flat state; clear order queue."""
     config = load_live_config(paths.config_path)
     config.symbols = list(symbols)
     config.total_cash = float(total_cash)
     config.use_account_cash = bool(use_account_cash)
+    if trading_budget_usd is not None:
+        config.trading_budget_usd = float(trading_budget_usd)
     # Keep SymbolParams entries aligned with symbols.
     by_sym = {a.symbol: a for a in config.assets}
     from app.live.config import SymbolParams
@@ -119,14 +116,24 @@ def apply_state_reset(
     return config
 
 
-def longs_to_sell(positions: Mapping[str, float], symbols: Sequence[str]) -> dict[str, float]:
-    """Positive broker qty for symbols in the live book."""
-    want = {str(s) for s in symbols}
+def longs_to_sell(
+    positions: Mapping[str, float],
+    symbols: Sequence[str] | None = None,
+) -> dict[str, float]:
+    """Positive broker qty to flatten.
+
+    When ``symbols`` is provided, only those names; otherwise every long
+    (full account flatten).
+    """
+    want = {str(s) for s in symbols} if symbols is not None else None
     out: dict[str, float] = {}
     for sym, qty in positions.items():
         q = float(qty)
-        if sym in want and q > 1e-9:
-            out[sym] = q
+        if q <= 1e-9:
+            continue
+        if want is not None and sym not in want:
+            continue
+        out[str(sym)] = q
     return out
 
 
@@ -218,10 +225,13 @@ def plan_reset(
     prices: Mapping[str, float],
     equity: float,
     available_funds: float,
+    flatten_all: bool = True,
 ) -> ResetPlan:
-    sells = longs_to_sell(positions, symbols)
-    # Pre-flatten dry-run: estimate post-cash pool from equity (cash returns on sells).
-    pool = max(float(equity), float(available_funds))
+    # Sell every broker long by default so leftover names outside the book
+    # cannot leave the account uneven after reset.
+    sells = longs_to_sell(positions, None if flatten_all else symbols)
+    # Sleeve labels use native equity (equal). Live buys size from spendable_usd.
+    pool = max(0.0, float(equity))
     sleeve = redistribute_sleeve_cash(symbols, prices, pool)
     return ResetPlan(
         symbols=list(symbols),

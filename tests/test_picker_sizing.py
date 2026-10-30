@@ -1,5 +1,6 @@
 from app.picker.sizing import (
     allocate_priority_sleeves,
+    resolve_equal_buy_cash_cap,
     sleeve_buy_budget,
     whole_share_allocation,
 )
@@ -9,6 +10,24 @@ def test_sleeve_buy_budget_splits_remaining() -> None:
     assert sleeve_buy_budget(900.0, n_active_non_exit_only=3, n_already_long=1) == 450.0
     assert sleeve_buy_budget(1000.0, n_active_non_exit_only=1, n_already_long=0) == 1000.0
     assert sleeve_buy_budget(0.0, n_active_non_exit_only=3, n_already_long=0) == 0.0
+
+
+def test_resolve_equal_buy_cash_cap_stretches() -> None:
+    assert resolve_equal_buy_cash_cap(
+        3000.0,
+        n_active_non_exit_only=5,
+        n_already_long=0,
+        price=800.0,
+    ) == 800.0
+
+
+def test_resolve_equal_buy_cash_cap_keeps_equal_when_fit() -> None:
+    assert resolve_equal_buy_cash_cap(
+        1000.0,
+        n_active_non_exit_only=5,
+        n_already_long=0,
+        price=100.0,
+    ) == 200.0
 
 
 def test_whole_share_allocation_stretches_above_even_split() -> None:

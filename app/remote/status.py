@@ -3,9 +3,26 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+
+
+def next_picker_rank_at(now: datetime | None = None) -> datetime:
+    """Next biweekly ranking fire time: Saturday 00:00 America/New_York.
+
+    Matches ``picker-rank.timer`` (Sat ~04:00 UTC in EDT). Returned aware UTC.
+    """
+    et = ZoneInfo("America/New_York")
+    now_et = (now or datetime.now(timezone.utc)).astimezone(et)
+    days_ahead = (5 - now_et.weekday()) % 7  # Saturday = 5
+    candidate = (now_et + timedelta(days=days_ahead)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    if candidate <= now_et:
+        candidate = candidate + timedelta(days=7)
+    return candidate.astimezone(timezone.utc)
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -63,6 +80,29 @@ def load_live_status(state_live_dir: Path) -> dict[str, Any]:
         "spendable_usd": state.get("spendable_usd")
         if state.get("spendable_usd") is not None
         else (last_cycle or {}).get("spendable_usd"),
+        "account_currency": state.get("account_currency")
+        if state.get("account_currency") is not None
+        else (last_cycle or {}).get("account_currency"),
+        "usd_cad_rate": state.get("usd_cad_rate")
+        if state.get("usd_cad_rate") is not None
+        else (last_cycle or {}).get("usd_cad_rate"),
+        "fx_rates": state.get("fx_rates")
+        if isinstance(state.get("fx_rates"), dict)
+        else (
+            (last_cycle or {}).get("fx_rates")
+            if isinstance((last_cycle or {}).get("fx_rates"), dict)
+            else None
+        ),
+        "trading_budget_usd": state.get("trading_budget_usd")
+        if state.get("trading_budget_usd") is not None
+        else (
+            config.get("trading_budget_usd")
+            if config.get("trading_budget_usd") is not None
+            else (last_cycle or {}).get("trading_budget_usd")
+        ),
+        "invested_usd": state.get("invested_usd")
+        if state.get("invested_usd") is not None
+        else (last_cycle or {}).get("invested_usd"),
         "broker_equity_usd": state.get("broker_equity_usd")
         if state.get("broker_equity_usd") is not None
         else (last_cycle or {}).get("book_equity"),
@@ -249,6 +289,8 @@ def load_picker_status(state_picker_dir: Path) -> dict[str, Any]:
                     row["name"] = info.name
                 if not row.get("sector") and info.sector:
                     row["sector"] = info.sector
+    next_rank = next_picker_rank_at()
+    last_rank_status = _read_json(root / "last_rank_status.json")
     return {
         "active": active_symbols,
         "active_run_id": (active or {}).get("run_id") if active else None,
@@ -258,6 +300,8 @@ def load_picker_status(state_picker_dir: Path) -> dict[str, Any]:
         "pending_rows": pending_rows,
         "pending_apply_after": apply_after,
         "latest_run": latest,
+        "next_rank_at_utc": next_rank.isoformat(),
+        "last_rank_status": last_rank_status,
     }
 
 

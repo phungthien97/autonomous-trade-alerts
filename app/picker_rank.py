@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from datetime import date, datetime
@@ -69,7 +70,23 @@ def _fixture_provider_from_env():
     return FixtureBarProvider(series=series)
 
 
-def _recent_successful_run(picker_paths: PickerPaths, within_days: int = 13) -> Path | None:
+# Weekly systemd timer + this window ≈ every other Saturday.
+# Use 10d (not 13d): a ranking that finishes ~1 day after Saturday midnight
+# still leaves the +2-week Saturday eligible. With 13d, that slot skips and
+# the next real run slips to ~3 weeks.
+BIWEEKLY_SKIP_WITHIN_DAYS = 10
+
+
+def _recent_successful_run(
+    picker_paths: PickerPaths,
+    within_days: int = BIWEEKLY_SKIP_WITHIN_DAYS,
+    *,
+    now_ts: float | None = None,
+) -> Path | None:
+    """Return newest non-aborted run if it is still inside the skip window.
+
+    ``None`` means the biweekly job should rank (no recent success).
+    """
     runs = picker_paths.ranking_runs_dir
     if not runs.is_dir():
         return None
@@ -88,7 +105,7 @@ def _recent_successful_run(picker_paths: PickerPaths, within_days: int = 13) -> 
             newest = path
     if newest is None:
         return None
-    age_days = (datetime.now().timestamp() - newest_mtime) / 86400.0
+    age_days = ((now_ts if now_ts is not None else datetime.now().timestamp()) - newest_mtime) / 86400.0
     if age_days <= within_days:
         return newest
     return None
@@ -116,6 +133,35 @@ def main(argv: list[str] | None = None) -> int:
         recent = _recent_successful_run(picker_paths)
         if recent is not None:
             print(f"skip_biweekly recent_run={recent.name}")
+            from datetime import timezone as _tz
+
+            from app.picker.notify import build_skip_email_body, send_picker_email
+
+            now = datetime.now(tz=_tz.utc)
+            status = {
+                "status": "skipped",
+                "reason": "biweekly_window",
+                "recent_run": recent.name,
+                "within_days": BIWEEKLY_SKIP_WITHIN_DAYS,
+                "at_utc": now.isoformat(),
+            }
+            try:
+                picker_paths.state_dir.mkdir(parents=True, exist_ok=True)
+                picker_paths.last_rank_status_path.write_text(
+                    json.dumps(status, indent=2) + "\n", encoding="utf-8"
+                )
+            except OSError as exc:
+                print(f"warn: could not write last_rank_status: {exc}", file=sys.stderr)
+            if not args.no_email:
+                body = build_skip_email_body(
+                    recent_run=recent.name,
+                    within_days=BIWEEKLY_SKIP_WITHIN_DAYS,
+                    next_hint="next Saturday after the skip window (or --force)",
+                )
+                try:
+                    send_picker_email("[PICKER] skipped — biweekly window", body)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"warn: skip email failed: {exc}", file=sys.stderr)
             return 0
     active = load_active(picker_paths.active_selection_path)
     active_symbols = [s.symbol for s in active.symbols if not s.exit_only] if active else []
@@ -146,7 +192,11 @@ def main(argv: list[str] | None = None) -> int:
     live_cfg_path = LivePaths(project_root=root).config_path
     if live_cfg_path.is_file():
         try:
-            book_cash = float(load_live_config(live_cfg_path).total_cash)
+            live_cfg = load_live_config(live_cfg_path)
+            if live_cfg.trading_budget_usd is not None:
+                book_cash = float(live_cfg.trading_budget_usd)
+            else:
+                book_cash = float(live_cfg.total_cash)
         except (OSError, TypeError, ValueError, KeyError):
             book_cash = 1000.0
 
@@ -166,6 +216,23 @@ def main(argv: list[str] | None = None) -> int:
     print(f"selected={[s.symbol for s in result.selected]}")
     if result.report_path:
         print(f"report={result.report_path}")
+    try:
+        from datetime import timezone as _tz
+
+        status = {
+            "status": "aborted" if result.aborted else ("dry_run" if result.dry_run else "ran"),
+            "ok": bool(result.ok),
+            "run_id": result.run_id,
+            "pending_written": bool(result.pending_written),
+            "selected": [s.symbol for s in result.selected],
+            "at_utc": datetime.now(tz=_tz.utc).isoformat(),
+        }
+        picker_paths.state_dir.mkdir(parents=True, exist_ok=True)
+        picker_paths.last_rank_status_path.write_text(
+            json.dumps(status, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        print(f"warn: could not write last_rank_status: {exc}", file=sys.stderr)
     return 0 if result.ok or result.aborted else 1
 
 

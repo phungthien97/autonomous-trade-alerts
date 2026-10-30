@@ -7,6 +7,7 @@ from app.remote.status import (
     load_live_status,
     load_paper_status,
     load_picker_status,
+    next_picker_rank_at,
 )
 
 
@@ -133,6 +134,14 @@ def test_load_picker_status_ranking_meta(tmp_path: Path) -> None:
     assert status["latest_run"]["run_id"] == "20261018_002339"
     assert status["latest_run"]["selected"] == ["FICO", "COHR"]
     assert status["latest_run"]["dry_run"] is True
+    assert status.get("next_rank_at_utc")
+
+
+def test_next_picker_rank_at_saturday_midnight_et() -> None:
+    # Wednesday 2026-10-28 20:00 ET → next Sat 2026-10-31 00:00 ET
+    now = datetime(2026, 10, 29, 0, 0, tzinfo=timezone.utc)  # Wed 20:00 EDT
+    nxt = next_picker_rank_at(now)
+    assert nxt.astimezone(timezone.utc).isoformat().startswith("2026-10-31T04:00:00")
 
 
 def test_last_cycle_age_minutes() -> None:

@@ -55,6 +55,17 @@ def overlay_ibkr_marks(
         spendable = getattr(snapshot, "spendable_usd", None)
         if spendable is not None:
             out["spendable_usd"] = float(spendable)
+        account_ccy = getattr(snapshot, "account_currency", None)
+        if account_ccy:
+            out["account_currency"] = str(account_ccy)
+        rate = getattr(snapshot, "usd_cad_rate", None)
+        if rate is not None:
+            out["usd_cad_rate"] = float(rate)
+        fx_map = getattr(snapshot, "fx_rates", None)
+        if isinstance(fx_map, dict) and fx_map:
+            out["fx_rates"] = {
+                str(k).upper(): float(v) for k, v in fx_map.items() if float(v) > 0
+            }
         price_book = getattr(broker, "last_prices", None) or {}
         rows = []
         for row in out.get("positions") or []:
@@ -83,6 +94,25 @@ def overlay_ibkr_marks(
                 }
             )
         out["positions"] = sorted(rows, key=lambda r: r["symbol"])
+        # Fresh 20-hour SMA for Positions "Next buy/sell" copy.
+        symbols = [str(r.get("symbol")) for r in out["positions"] if r.get("symbol")]
+        if symbols and hasattr(broker, "latest_hourly_closes"):
+            try:
+                from app.picker.trend_gate import sma
+
+                _px, _bars, closes = broker.latest_hourly_closes(symbols, use_rth=True)
+                sma_map: dict[str, float] = {}
+                if isinstance(closes, dict):
+                    for sym, series in closes.items():
+                        if not isinstance(series, (list, tuple)):
+                            continue
+                        avg = sma([float(x) for x in series])
+                        if avg is not None:
+                            sma_map[str(sym).upper()] = round(float(avg), 4)
+                if sma_map:
+                    out["sma20_by_symbol"] = sma_map
+            except Exception:  # noqa: BLE001 — marks still usable without SMA
+                pass
         out["marks_source"] = "ibkr"
     except Exception as exc:  # noqa: BLE001 — dashboard must fail soft
         out["marks_source"] = "files"

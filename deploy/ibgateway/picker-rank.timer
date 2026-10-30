@@ -1,10 +1,12 @@
 [Unit]
-Description=Biweekly S&P picker ranking (Sat 00:00 America/New_York)
+Description=Biweekly S&P picker ranking (every other Sat via weekly fire + CLI window)
 
 [Timer]
-# Saturday ~00:00 Eastern. Host clock is UTC; 04:00 UTC = midnight EDT.
-# (Winter EST ≈ 05:00 UTC — acceptable; CLI as_of uses America/New_York.)
-# CLI skips if a successful run landed within 13 days unless PICKER_FORCE=1.
+# systemd has no portable "every other Saturday" expression, so we fire every
+# Saturday ~00:00 Eastern and let app/picker_rank.py enforce biweekly
+# (BIWEEKLY_SKIP_WITHIN_DAYS=10). Skips email + write last_rank_status.json.
+# Host clock is UTC; 04:00 UTC = midnight EDT (winter EST ≈ 05:00 UTC).
+# Force: PICKER_FORCE=1 or python -m app.picker_rank --force
 OnCalendar=Sat *-*-* 04:00:00
 Persistent=true
 AccuracySec=1min

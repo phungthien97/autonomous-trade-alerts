@@ -26,14 +26,13 @@ def test_redistribute_equal_when_prices_missing() -> None:
     assert cash == {"A": 500.0, "B": 500.0}
 
 
-def test_redistribute_priority_covers_all_five() -> None:
+def test_redistribute_equal_across_five() -> None:
     syms = ["P", "FICO", "HUM", "AMGN", "VLO"]
     prices = {"P": 130.0, "FICO": 800.0, "HUM": 425.0, "AMGN": 440.0, "VLO": 430.0}
     cash = redistribute_sleeve_cash(syms, prices, 1_000_000.0)
     assert set(cash) == set(syms)
     assert abs(sum(cash.values()) - 1_000_000.0) < 0.02
-    # No single sleeve should absorb almost the whole book.
-    assert max(cash.values()) < 400_000.0
+    assert all(abs(v - 200_000.0) < 0.01 for v in cash.values())
 
 
 def test_build_flat_assets_clears_peaks() -> None:
@@ -101,13 +100,27 @@ def test_apply_state_reset_writes_files(tmp_path: Path) -> None:
 def test_plan_reset_lists_sells() -> None:
     plan = plan_reset(
         symbols=["P", "FICO", "VLO"],
-        positions={"P": 11.0, "FICO": 1.0},
+        positions={"P": 11.0, "FICO": 1.0, "EXTRA": 3.0},
         prices={"P": 130.0, "FICO": 800.0, "VLO": 430.0},
         equity=1_000_500.0,
         available_funds=995_000.0,
     )
-    assert plan.positions_to_sell == {"P": 11.0, "FICO": 1.0}
+    # flatten_all=True sells every broker long, not only book symbols.
+    assert plan.positions_to_sell == {"P": 11.0, "FICO": 1.0, "EXTRA": 3.0}
     assert abs(sum(plan.sleeve_cash.values()) - 1_000_500.0) < 0.02
+    assert all(abs(v - 333_500.0) < 0.01 for v in plan.sleeve_cash.values())
+
+
+def test_plan_reset_book_only_when_flatten_all_false() -> None:
+    plan = plan_reset(
+        symbols=["P", "FICO", "VLO"],
+        positions={"P": 11.0, "FICO": 1.0, "EXTRA": 3.0},
+        prices={"P": 130.0, "FICO": 800.0, "VLO": 430.0},
+        equity=1_000_500.0,
+        available_funds=995_000.0,
+        flatten_all=False,
+    )
+    assert plan.positions_to_sell == {"P": 11.0, "FICO": 1.0}
 
 
 def test_wait_until_rth_returns_when_open() -> None:

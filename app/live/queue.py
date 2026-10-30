@@ -14,6 +14,8 @@ class PendingIntent:
     bar_ts: str
     created_at: str
     reason: str
+    quantity: float = 0.0
+    estimated_fees: float = 0.0
 
 
 class PendingIntentStore:
@@ -24,7 +26,22 @@ class PendingIntentStore:
         if not self.path.exists():
             return []
         raw = json.loads(self.path.read_text(encoding="utf-8"))
-        return [PendingIntent(**row) for row in raw.get("intents", [])]
+        out: list[PendingIntent] = []
+        for row in raw.get("intents", []):
+            if not isinstance(row, dict):
+                continue
+            out.append(
+                PendingIntent(
+                    symbol=str(row["symbol"]),
+                    side=str(row["side"]),
+                    bar_ts=str(row["bar_ts"]),
+                    created_at=str(row.get("created_at") or row["bar_ts"]),
+                    reason=str(row.get("reason") or ""),
+                    quantity=float(row.get("quantity") or 0.0),
+                    estimated_fees=float(row.get("estimated_fees") or 0.0),
+                )
+            )
+        return out
 
     def _save(self, intents: list[PendingIntent]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

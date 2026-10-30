@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Callable
 
 from app.audit.log import AuditLog
 from app.broker.base import BrokerClient
@@ -31,16 +32,28 @@ def execute_intent(
         audit.append("skipped", {"key": key})
         return ExecuteResult("skipped")
     if not rth_ok:
-        queue.enqueue(
+        enqueued = queue.enqueue(
             PendingIntent(
                 symbol=intent.symbol,
                 side=intent.side,
                 bar_ts=intent.bar_ts,
                 created_at=intent.bar_ts,
                 reason=intent.reason,
+                quantity=float(intent.quantity),
+                estimated_fees=float(intent.estimated_fees),
             )
         )
-        audit.append("queued", {"symbol": intent.symbol, "side": intent.side, "bar_ts": intent.bar_ts})
+        # Dedupe: do not spam audit every 5m for the same parked intent.
+        if enqueued:
+            audit.append(
+                "queued",
+                {
+                    "symbol": intent.symbol,
+                    "side": intent.side,
+                    "bar_ts": intent.bar_ts,
+                    "quantity": float(intent.quantity),
+                },
+            )
         return ExecuteResult("queued")
     if mode in (TradingMode.sim, TradingMode.live_dry_run):
         audit.append("dry_run", {"symbol": intent.symbol, "side": intent.side, "quantity": intent.quantity})
@@ -87,3 +100,61 @@ def execute_intent(
         audit.append("fill", {"order_id": result.order_id, "filled_qty": result.filled_qty, "avg_price": result.avg_price})
     idempotency.mark_done(key, {"order_id": result.order_id, "status": result.status})
     return ExecuteResult(result.status, result.order_id)
+
+
+def flush_pending_queue(
+    queue: PendingIntentStore,
+    *,
+    broker: BrokerClient,
+    idempotency: IdempotencyStore,
+    audit: AuditLog,
+    mode: TradingMode,
+    allow_side: Callable[[PendingIntent], str | None] | None = None,
+) -> list[dict]:
+    """Execute parked intents now that US RTH is open.
+
+    ``allow_side(intent)`` returns None to proceed, or a skip reason string
+    (e.g. ``exit_only``, ``sma20_gate``, ``zero_qty``). Soft-rotate / SMA gates
+    belong to the caller. Queue is cleared up front so a failed place cannot
+    re-enqueue the same rows in a weird loop.
+    """
+    pending = queue.list_pending()
+    if not pending:
+        return []
+    queue.clear()
+    results: list[dict] = []
+    for row in pending:
+        reason = allow_side(row) if allow_side is not None else None
+        if reason:
+            audit.append(
+                "queue_dropped",
+                {"symbol": row.symbol, "side": row.side, "bar_ts": row.bar_ts, "reason": reason},
+            )
+            results.append({"symbol": row.symbol, "side": row.side, "status": "dropped", "reason": reason})
+            continue
+        qty = float(row.quantity or 0.0)
+        if qty <= 0:
+            audit.append(
+                "queue_dropped",
+                {"symbol": row.symbol, "side": row.side, "bar_ts": row.bar_ts, "reason": "zero_qty"},
+            )
+            results.append({"symbol": row.symbol, "side": row.side, "status": "dropped", "reason": "zero_qty"})
+            continue
+        intent = OrderIntent(
+            symbol=row.symbol,
+            side=row.side,
+            quantity=qty,
+            estimated_fees=float(row.estimated_fees or 0.0),
+            bar_ts=row.bar_ts,
+            reason=row.reason or "queued",
+        )
+        result = execute_intent(intent, broker, idempotency, audit, mode, True, queue)
+        results.append(
+            {
+                "symbol": row.symbol,
+                "side": row.side,
+                "status": result.status,
+                "order_id": result.order_id,
+            }
+        )
+    return results

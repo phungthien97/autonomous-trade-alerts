@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from math import floor
 from typing import Mapping, Sequence
 
+from app.live.sizing import buy_share_quantity
+
 
 def sleeve_buy_budget(
     spendable_usd: float,
@@ -16,6 +18,7 @@ def sleeve_buy_budget(
 
     ``spendable / max(1, n_active - n_already_long)``. No forced rebalance —
     only splits currently available cash across symbols still flat.
+    ``spendable_usd`` must already be USD (via AccountSnapshot.spendable_usd / FX).
     """
     spendable = max(0.0, float(spendable_usd))
     n_active = int(n_active_non_exit_only)
@@ -24,6 +27,39 @@ def sleeve_buy_budget(
         raise ValueError("counts must be non-negative")
     remaining = max(1, n_active - n_long)
     return spendable / float(remaining)
+
+
+def resolve_equal_buy_cash_cap(
+    spendable_usd: float,
+    *,
+    n_active_non_exit_only: int,
+    n_already_long: int,
+    price: float,
+    allow_fractional: bool = False,
+) -> float:
+    """Equal flat-sleeve budget, with 1-share stretch when the equal slot is too small.
+
+    Long-term live contract:
+    - Prefer equal USD among remaining flats (no forced rebalance of winners).
+    - If whole-share qty at that equal cap is 0 but ``price <= spendable``,
+      stretch the cap to ``price`` so an expensive name can still enter once.
+    - If even 1 share exceeds the whole pool → return the equal cap (planner
+      rejects as zero quantity; never borrow).
+    """
+    pool = max(0.0, float(spendable_usd))
+    equal_cap = sleeve_buy_budget(
+        pool,
+        n_active_non_exit_only,
+        n_already_long,
+    )
+    px = float(price)
+    if px <= 0:
+        return equal_cap
+    if buy_share_quantity(equal_cap, px, allow_fractional) > 0:
+        return equal_cap
+    if not allow_fractional and px <= pool + 1e-9:
+        return px
+    return equal_cap
 
 
 @dataclass(frozen=True)

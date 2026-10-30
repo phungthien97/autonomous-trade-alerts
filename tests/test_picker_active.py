@@ -6,6 +6,8 @@ from app.picker.active import (
     clear_awaiting_first_buy,
     clear_exit_only_if_flat,
     load_active,
+    prune_exit_only_if_flat,
+    reconcile_awaiting_first_buy,
     save_active,
 )
 
@@ -43,7 +45,21 @@ def test_clear_flags() -> None:
         ],
     )
     assert clear_exit_only_if_flat(active, "A", shares=1.0) is False
-    assert clear_exit_only_if_flat(active, "A", shares=0.0) is True
-    assert active.get("A").exit_only is False  # type: ignore[union-attr]
+    assert prune_exit_only_if_flat(active, "A", shares=0.0) is True
+    assert active.get("A") is None
     assert clear_awaiting_first_buy(active, "B") is True
     assert active.get("B").awaiting_first_buy is False  # type: ignore[union-attr]
+
+
+def test_reconcile_awaiting_clears_when_long() -> None:
+    active = ActiveSelection(
+        applied_at="t",
+        run_id="r",
+        symbols=[
+            ActiveSymbol("P", 0.01, 0.06, awaiting_first_buy=True),
+            ActiveSymbol("HUM", 0.015, 0.01, awaiting_first_buy=True),
+        ],
+    )
+    assert reconcile_awaiting_first_buy(active, {"P": 10.0, "HUM": 0.0}) is True
+    assert active.get("P").awaiting_first_buy is False  # type: ignore[union-attr]
+    assert active.get("HUM").awaiting_first_buy is True  # type: ignore[union-attr]
