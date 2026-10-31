@@ -7,7 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.paths import PickerPaths
-from app.picker_rank import BIWEEKLY_SKIP_WITHIN_DAYS, _recent_successful_run
+from app.picker_rank import (
+    BIWEEKLY_SKIP_WITHIN_DAYS,
+    _picker_client_ids,
+    _recent_successful_run,
+)
 
 
 def _write_run(runs: Path, name: str, *, aborted: bool = False) -> Path:
@@ -34,6 +38,15 @@ def test_skip_window_blocks_next_saturday_allows_biweekly(tmp_path: Path) -> Non
     # Previously failed with within_days=13 (age ≈12.2 still skipped).
     assert biweekly - finished > BIWEEKLY_SKIP_WITHIN_DAYS * 86400
     assert _recent_successful_run(paths, now_ts=biweekly) is None
+
+
+def test_picker_client_ids_never_use_worker_or_dashboard(monkeypatch) -> None:
+    monkeypatch.setenv("PICKER_IB_CLIENT_ID", "7")
+    monkeypatch.setenv("IB_CLIENT_ID", "1")  # must not win
+    ids = _picker_client_ids()
+    assert ids[0] == 7
+    assert 1 not in ids
+    assert 9 not in ids
 
 
 def test_aborted_run_does_not_block(tmp_path: Path) -> None:

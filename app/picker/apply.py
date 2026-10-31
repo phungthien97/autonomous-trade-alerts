@@ -90,9 +90,18 @@ def apply_pending_selection(
     prior = load_active(picker_paths.active_selection_path)
     active_symbols = [s.symbol for s in prior.symbols] if prior else []
     pending_symbols = [s.symbol for s in pending.symbols]
-    plan = plan_soft_rotate(active_symbols, pending_symbols)
-
     prior_params = {s.symbol: s for s in (prior.symbols if prior else [])}
+    prior_awaiting = {
+        s.symbol: bool(s.awaiting_first_buy) for s in (prior.symbols if prior else [])
+    }
+    plan = plan_soft_rotate(
+        active_symbols,
+        pending_symbols,
+        prior_awaiting=prior_awaiting,
+    )
+    awaiting_symbols = [
+        sym for sym in pending_symbols if plan.flags[sym].awaiting_first_buy
+    ]
     applied_at = (now or datetime.now(timezone.utc)).isoformat()
 
     apply_to_live_config(
@@ -120,14 +129,14 @@ def apply_pending_selection(
         v1_paths.state_path,
         pending.symbols,
         exit_only_symbols=plan.dropped,
-        awaiting_first_buy=plan.added,
+        awaiting_first_buy=awaiting_symbols,
     )
     apply_to_paper_v2(
         v2_paths.config_path,
         v2_paths.state_path,
         pending.symbols,
         exit_only_symbols=plan.dropped,
-        awaiting_first_buy=plan.added,
+        awaiting_first_buy=awaiting_symbols,
     )
 
     active_rows: list[ActiveSymbol] = []

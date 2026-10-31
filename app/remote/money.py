@@ -291,20 +291,29 @@ def position_rows(
     }
     total = float(nav) if nav and nav > 0 else book_nav(positions)
     flat_n = sum(1 for row in (positions or []) if float(row.get("shares") or 0.0) <= 0)
-    # Equal-sleeve target for dashboard copy (budget / N non-exit_only).
+    # Equal-sleeve target for dashboard copy: (budget − exit_only) / N actives.
     equal_target = None
     if use_account_cash and trading_budget_usd is not None and float(trading_budget_usd) > 0:
         n_eq = 0
+        exit_only_inv = 0.0
         for prow in positions or []:
             psym = str(prow.get("symbol") or "")
             pflag = flags.get(psym) if psym else None
+            shares_p = float(prow.get("shares") or 0.0)
+            try:
+                px_p = float(prow.get("price") or 0.0)
+            except (TypeError, ValueError):
+                px_p = 0.0
             if pflag and pflag.get("exit_only"):
+                if shares_p > 0 and px_p > 0:
+                    exit_only_inv += shares_p * px_p
                 continue
             n_eq += 1
         if n_eq <= 0:
             n_eq = len(positions or [])
         if n_eq > 0:
-            equal_target = float(trading_budget_usd) / float(n_eq)
+            deployable = max(0.0, float(trading_budget_usd) - exit_only_inv)
+            equal_target = deployable / float(n_eq)
     buy_budget = None
     if use_account_cash and available_cash is not None and flat_n > 0:
         # available_cash is already flat_buy_pool (underweight longs reserved).

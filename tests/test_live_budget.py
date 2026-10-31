@@ -154,6 +154,48 @@ def test_rebalance_missing_price_skipped() -> None:
     assert any(s.symbol == "B" and s.reason == "missing_price" for s in plan.skipped)
 
 
+def test_rebalance_shrinks_for_exit_only_invested() -> None:
+    """Soft-rotate overlap: exit-only capital shrinks active equal targets."""
+    from app.live.budget import deployable_budget_usd, equal_sleeve_target_usd
+
+    # Wallet 500; exit-only still holds 200 → deployable 300 / 3 actives = 100.
+    assert deployable_budget_usd(500.0, 200.0) == pytest.approx(300.0)
+    assert equal_sleeve_target_usd(500.0, 3, exit_only_invested_usd=200.0) == pytest.approx(
+        100.0
+    )
+    positions = {"A": 50.0, "B": 0.0, "C": 0.0}  # A underweight vs 100 target
+    prices = {"A": 1.0, "B": 1.0, "C": 1.0}
+    plan = plan_rebalance_to_equal(
+        ["A", "B", "C"],
+        positions,
+        prices,
+        budget_usd=500.0,
+        spendable_usd=1_000.0,
+        sma20_ok={"A": True, "B": True, "C": True},
+        exit_only_invested_usd=200.0,
+    )
+    assert plan.deployable_budget_usd == pytest.approx(300.0)
+    assert plan.target_per_sleeve == pytest.approx(100.0)
+    assert plan.exit_only_invested_usd == pytest.approx(200.0)
+    # Without the exit-only haircut, targets would be ~166 each and A would buy more.
+    assert not plan.sells
+    assert {o.symbol: o.shares for o in plan.buys} == {"A": 50.0, "B": 100.0, "C": 100.0}
+    # Active mark after buys + exit-only = wallet (300 + 200), not 500 + 200.
+    assert sum(o.notional for o in plan.buys) + 50.0 + 200.0 == pytest.approx(500.0)
+
+
+def test_reserve_underweight_uses_deployable() -> None:
+    # Budget 500, exit-only 200 → target 100. P at 70 → reserve 30 (not 96.6).
+    reserved = reserve_underweight_longs_usd(
+        500.0,
+        symbols=["P", "FICO", "HUM"],
+        positions={"P": 70.0, "FICO": 0.0, "HUM": 0.0},
+        prices={"P": 1.0, "FICO": 1.0, "HUM": 1.0},
+        exit_only_invested_usd=200.0,
+    )
+    assert reserved == pytest.approx(30.0)
+
+
 def test_set_trading_budget_does_not_require_broker(tmp_path: Path) -> None:
     paths = LivePaths(project_root=tmp_path)
     paths.state_dir.mkdir(parents=True)

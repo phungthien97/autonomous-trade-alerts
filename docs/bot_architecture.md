@@ -139,8 +139,8 @@ Guard: `app/broker/gateway.py` (`BrokerGateway`).
 **Long-term contract (live, `use_account_cash`):**
 
 - **Trading budget (USD wallet)** on the dashboard caps how much of the IBKR account the bot may deploy. Deposits do **not** auto-enlarge the book; raise the budget manually.
-- **Save budget** (type `REBALANCE`): equalizes each active non-`exit_only` sleeve to `budget_usd / N` (SELL overweight, BUY underweight). Buys respect **SMA20**; US RTH only; briefly stops `live-worker` during orders; never borrow. Cash-out without equalizing: **Reduce** (pro-rata sells only) → withdraw in IBKR.
-- Buy pool (signal-driven entries between rebalances) = unused wallet minus USD **reserved** to top underweight longs up to `budget/N`, then split among flats (also capped at `budget/N`). Missing FX → spendable 0 → block buys.
+- **Save budget** (type `REBALANCE`): equalizes each active non-`exit_only` sleeve to `(budget_usd − exit_only invested) / N` (SELL overweight, BUY underweight). Soft-rotate drops still long shrink active targets so total invested stays ≤ wallet. Buys respect **SMA20**; US RTH only; briefly stops `live-worker` during orders; never borrow. Universe = active/config only (no orphan broker longs). Cash-out without equalizing: **Reduce** (pro-rata sells of **bot book only**, RTH + trading-enabled + worker pause) → withdraw in IBKR.
+- Buy pool (signal-driven entries between rebalances) = unused wallet minus USD **reserved** to top underweight longs up to deployable/`N`, then split among flats (also capped at deployable/`N`). Missing FX → spendable 0 → block buys.
 - **Equal among remaining flats** on that pool (+ **1-share stretch** if equal slot &lt; price but pool can afford 1 share).
 - After a BUY is live, `n_long` reserves the sleeve so same-cycle peers stay even on the refreshed pool.
 - **Picker top-down** chooses *which* names are in the book; dollars come from the budget pool.
@@ -205,7 +205,7 @@ When `live_worker` sees RTH **and** `now ≥ apply_after`:
 ```mermaid
 flowchart TD
   P["pending symbols"] --> Diff["plan_soft_rotate vs active"]
-  Diff --> Keep["Kept: normal trading"]
+  Diff --> Keep["Kept: preserve awaiting_first_buy<br/>until a real fill"]
   Diff --> Add["Added: awaiting_first_buy<br/>SMA20 before first BUY"]
   Diff --> Drop["Dropped: exit_only<br/>no new BUY; sell when signal fires<br/>prune from book once flat"]
   Keep --> Write["Write live + V1 + V2 configs<br/>+ active_selection.json<br/>mark pending applied"]
@@ -215,7 +215,7 @@ flowchart TD
 
 Files: `app/picker/apply.py`, `soft_rotate.py`, `apply_live.py`, `apply_paper.py`, `active.py` (`prune_exit_only_if_flat`).
 
-**Save & rebalance vs soft-rotate:** rebalance targets **non-exit-only** actives only. Capital stuck in exit-only drops is freed by a strategy SELL (or dashboard **Reduce**), not by Save & rebalance.
+**Save & rebalance vs soft-rotate:** rebalance targets **non-exit-only** actives only, sized from **deployable = budget − exit-only invested**. Capital stuck in exit-only drops is freed by a strategy SELL (or dashboard **Reduce**), not by Save & rebalance; until then active equal sleeves are smaller so the wallet ceiling holds.
 
 ---
 

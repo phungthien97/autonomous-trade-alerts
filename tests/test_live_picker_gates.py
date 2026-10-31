@@ -247,3 +247,19 @@ def test_latest_prices_forwards_close_series() -> None:
     assert bars["AAA"].startswith("2026-10-07")
     assert len(closes["AAA"]) == 20
     assert closes["AAA"][-1] == 101.5
+
+
+def test_latest_prices_fail_closed_without_yahoo_on_ibkr_empty() -> None:
+    from app.live_worker import _latest_prices
+
+    class _Empty:
+        def latest_hourly_closes(self, symbols, *, use_rth=True):
+            return {}, {}, {}
+
+    prices, bars, closes, source = _latest_prices(
+        ["AAA"], broker_inner=_Empty(), allow_yahoo_fallback=False
+    )
+    assert source == "ibkr_unavailable"
+    assert prices == {}
+    assert bars == {}
+    assert closes == {}

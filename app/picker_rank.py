@@ -11,7 +11,8 @@ import argparse
 import json
 import os
 import sys
-from datetime import date, datetime
+import time
+from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from urllib.request import urlopen
@@ -25,6 +26,14 @@ from app.picker.sp500 import load_sp500_constituents, profiles_by_symbol
 
 ET = ZoneInfo("America/New_York")
 WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+# Never share live-worker (1) / dashboard (9). .env often sets IB_CLIENT_ID=1 —
+# picker must force its own id (and fall back if that slot is busy).
+PICKER_CLIENT_ID_DEFAULT = 7
+PICKER_CLIENT_ID_FALLBACKS = (7, 17, 27, 37)
+PICKER_CONNECT_ATTEMPTS = 4
+PICKER_CONNECT_SLEEP_SEC = 15
+PICKER_RUN_ATTEMPTS = 3
+PICKER_RUN_SLEEP_SEC = 60
 
 
 def _parse_as_of(raw: str | None) -> date:
@@ -166,28 +175,6 @@ def main(argv: list[str] | None = None) -> int:
     active = load_active(picker_paths.active_selection_path)
     active_symbols = [s.symbol for s in active.symbols if not s.exit_only] if active else []
 
-    fixture = _fixture_provider_from_env()
-    if fixture is not None:
-        provider = fixture
-        print("bar_provider=fixture_env")
-    else:
-        from app.broker.ibkr import IbkrBroker
-
-        port = int(os.environ.get("IB_PORT", "4002"))
-        # Prefer dedicated picker client id so we do not fight live-worker (1).
-        if "IB_CLIENT_ID" not in os.environ:
-            os.environ["IB_CLIENT_ID"] = os.environ.get("PICKER_IB_CLIENT_ID", "7")
-        client_id = int(os.environ["IB_CLIENT_ID"])
-        broker = IbkrBroker(dry_run=True, port=port)
-        provider = IbkrHourlyBarProvider(broker)
-        print(f"bar_provider=ibkr port={port} client_id={client_id}")
-
-    constituents = load_sp500_constituents(picker_paths.sp500_cache_path, _wiki_fetcher)
-    profiles = profiles_by_symbol(constituents)
-
-    def sp500_loader() -> list[str]:
-        return [c.symbol for c in constituents]
-
     book_cash = 1000.0
     live_cfg_path = LivePaths(project_root=root).config_path
     if live_cfg_path.is_file():
@@ -200,40 +187,135 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, TypeError, ValueError, KeyError):
             book_cash = 1000.0
 
-    result = run_ranking(
-        as_of=as_of,
-        sp500_loader=sp500_loader,
-        bar_provider=provider,
-        picker_paths=picker_paths,
-        active_symbols=active_symbols,
-        send_email=not args.no_email,
-        dry_run=args.dry_run,
-        book_cash=book_cash,
-        profiles=profiles,
-    )
-    print(f"ok={result.ok} aborted={result.aborted} dry_run={result.dry_run}")
-    print(f"run_id={result.run_id} pending_written={result.pending_written}")
-    print(f"selected={[s.symbol for s in result.selected]}")
-    if result.report_path:
-        print(f"report={result.report_path}")
-    try:
-        from datetime import timezone as _tz
+    last_error: str | None = None
+    for attempt in range(1, PICKER_RUN_ATTEMPTS + 1):
+        broker = None
+        try:
+            fixture = _fixture_provider_from_env()
+            if fixture is not None:
+                provider = fixture
+                print("bar_provider=fixture_env")
+            else:
+                broker, client_id, port = _connect_picker_broker()
+                provider = IbkrHourlyBarProvider(broker)
+                print(f"bar_provider=ibkr port={port} client_id={client_id} attempt={attempt}")
 
-        status = {
-            "status": "aborted" if result.aborted else ("dry_run" if result.dry_run else "ran"),
-            "ok": bool(result.ok),
-            "run_id": result.run_id,
-            "pending_written": bool(result.pending_written),
-            "selected": [s.symbol for s in result.selected],
-            "at_utc": datetime.now(tz=_tz.utc).isoformat(),
-        }
+            constituents = load_sp500_constituents(picker_paths.sp500_cache_path, _wiki_fetcher)
+            profiles = profiles_by_symbol(constituents)
+
+            def sp500_loader() -> list[str]:
+                return [c.symbol for c in constituents]
+
+            result = run_ranking(
+                as_of=as_of,
+                sp500_loader=sp500_loader,
+                bar_provider=provider,
+                picker_paths=picker_paths,
+                active_symbols=active_symbols,
+                send_email=not args.no_email,
+                dry_run=args.dry_run,
+                book_cash=book_cash,
+                profiles=profiles,
+            )
+            print(f"ok={result.ok} aborted={result.aborted} dry_run={result.dry_run}")
+            print(f"run_id={result.run_id} pending_written={result.pending_written}")
+            print(f"selected={[s.symbol for s in result.selected]}")
+            if result.report_path:
+                print(f"report={result.report_path}")
+            _write_rank_status(
+                picker_paths,
+                {
+                    "status": "aborted" if result.aborted else ("dry_run" if result.dry_run else "ran"),
+                    "ok": bool(result.ok),
+                    "run_id": result.run_id,
+                    "pending_written": bool(result.pending_written),
+                    "selected": [s.symbol for s in result.selected],
+                    "attempt": attempt,
+                    "at_utc": datetime.now(tz=timezone.utc).isoformat(),
+                },
+            )
+            return 0 if result.ok or result.aborted else 1
+        except Exception as exc:  # noqa: BLE001 — retry connect / ranking crashes
+            last_error = f"{type(exc).__name__}: {exc}"
+            print(f"picker_rank attempt {attempt}/{PICKER_RUN_ATTEMPTS} failed: {last_error}", file=sys.stderr)
+            if attempt < PICKER_RUN_ATTEMPTS:
+                time.sleep(PICKER_RUN_SLEEP_SEC)
+        finally:
+            if broker is not None and hasattr(broker, "ib") and hasattr(broker.ib, "disconnect"):
+                try:
+                    broker.ib.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    _write_rank_status(
+        picker_paths,
+        {
+            "status": "failed",
+            "ok": False,
+            "reason": "retries_exhausted",
+            "error": last_error,
+            "attempts": PICKER_RUN_ATTEMPTS,
+            "at_utc": datetime.now(tz=timezone.utc).isoformat(),
+        },
+    )
+    if not args.no_email:
+        try:
+            from app.picker.notify import build_crash_email_body, send_picker_email
+
+            send_picker_email(
+                "[PICKER] FAILED — retries exhausted",
+                build_crash_email_body(error=last_error or "unknown", attempts=PICKER_RUN_ATTEMPTS),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"warn: failure email failed: {exc}", file=sys.stderr)
+    return 1
+
+
+def _picker_client_ids() -> list[int]:
+    """Primary picker id + fallbacks (never live-worker 1 / dashboard 9)."""
+    primary = int(os.environ.get("PICKER_IB_CLIENT_ID", str(PICKER_CLIENT_ID_DEFAULT)))
+    ordered = [primary, *[c for c in PICKER_CLIENT_ID_FALLBACKS if c != primary]]
+    # Drop reserved ids if someone misconfigured env.
+    return [c for c in ordered if c not in {1, 9}]
+
+
+def _connect_picker_broker():
+    """Connect with retries; rotate client ids on 'already in use' collisions."""
+    from app.broker.ibkr import IbkrBroker
+
+    port = int(os.environ.get("IB_PORT", "4002"))
+    last_exc: Exception | None = None
+    for client_id in _picker_client_ids():
+        for attempt in range(1, PICKER_CONNECT_ATTEMPTS + 1):
+            # Always overwrite — systemd EnvironmentFile often sets IB_CLIENT_ID=1.
+            os.environ["IB_CLIENT_ID"] = str(client_id)
+            try:
+                broker = IbkrBroker(dry_run=True, port=port)
+                return broker, client_id, port
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                msg = str(exc).lower()
+                print(
+                    f"picker IB connect failed client_id={client_id} "
+                    f"attempt={attempt}/{PICKER_CONNECT_ATTEMPTS}: {exc}",
+                    file=sys.stderr,
+                )
+                busy = "already in use" in msg or "client id" in msg or "clientid" in msg
+                if busy:
+                    break  # try next client id
+                if attempt < PICKER_CONNECT_ATTEMPTS:
+                    time.sleep(PICKER_CONNECT_SLEEP_SEC)
+    raise RuntimeError(f"picker IB connect failed after retries: {last_exc}") from last_exc
+
+
+def _write_rank_status(picker_paths: PickerPaths, status: dict) -> None:
+    try:
         picker_paths.state_dir.mkdir(parents=True, exist_ok=True)
         picker_paths.last_rank_status_path.write_text(
             json.dumps(status, indent=2) + "\n", encoding="utf-8"
         )
     except OSError as exc:
         print(f"warn: could not write last_rank_status: {exc}", file=sys.stderr)
-    return 0 if result.ok or result.aborted else 1
 
 
 if __name__ == "__main__":

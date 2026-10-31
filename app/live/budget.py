@@ -1,7 +1,8 @@
 """Trading budget: wallet size for live buys (separate from full IBKR equity).
 
 effective buy pool = min(max(0, budget - invested), spendable_usd)
-Save+REBALANCE equalizes sleeves to budget/N (orders). Reduce is cash-out-only.
+Save+REBALANCE equalizes active sleeves to deployable/N where
+deployable = budget - exit_only invested (orders). Reduce is cash-out-only.
 """
 
 from __future__ import annotations
@@ -35,6 +36,19 @@ def unused_budget(budget_usd: float, invested: float) -> float:
     return max(0.0, float(budget_usd) - max(0.0, float(invested)))
 
 
+def deployable_budget_usd(
+    budget_usd: float,
+    exit_only_invested_usd: float = 0.0,
+) -> float:
+    """Wallet still available for active (non-exit-only) sleeves.
+
+    Soft-rotate keeps dropped names long until a SELL; that capital still
+    counts against the trading budget, so Save & rebalance / equal targets
+    must size from what is left.
+    """
+    return max(0.0, float(budget_usd) - max(0.0, float(exit_only_invested_usd)))
+
+
 def effective_buy_pool(
     budget_usd: float | None,
     *,
@@ -53,12 +67,17 @@ def effective_buy_pool(
     return min(unused, spendable)
 
 
-def equal_sleeve_target_usd(budget_usd: float, n_symbols: int) -> float:
-    """Per-sleeve equal target = budget / N."""
+def equal_sleeve_target_usd(
+    budget_usd: float,
+    n_symbols: int,
+    *,
+    exit_only_invested_usd: float = 0.0,
+) -> float:
+    """Per-sleeve equal target = deployable budget / N."""
     n = int(n_symbols)
     if n <= 0:
         return 0.0
-    return max(0.0, float(budget_usd)) / float(n)
+    return deployable_budget_usd(float(budget_usd), exit_only_invested_usd) / float(n)
 
 
 def reserve_underweight_longs_usd(
@@ -67,8 +86,9 @@ def reserve_underweight_longs_usd(
     symbols: Sequence[str],
     positions: Mapping[str, float],
     prices: Mapping[str, float],
+    exit_only_invested_usd: float = 0.0,
 ) -> float:
-    """USD that must stay free to top underweight longs up to budget/N.
+    """USD that must stay free to top underweight longs up to deployable/N.
 
     Without this, flat signal buys spend the gap that belongs to names like P
     sitting at 70k of a 100k sleeve target.
@@ -76,7 +96,11 @@ def reserve_underweight_longs_usd(
     syms = [str(s).upper() for s in symbols if str(s).strip()]
     if not syms or float(budget_usd) <= 0:
         return 0.0
-    target = equal_sleeve_target_usd(float(budget_usd), len(syms))
+    target = equal_sleeve_target_usd(
+        float(budget_usd),
+        len(syms),
+        exit_only_invested_usd=exit_only_invested_usd,
+    )
     reserved = 0.0
     for sym in syms:
         shares = float(positions.get(sym, 0.0) or 0.0)
@@ -102,6 +126,7 @@ def flat_buy_pool_usd(
     prices: Mapping[str, float],
     invested_usd: float,
     spendable_usd: float,
+    exit_only_invested_usd: float = 0.0,
 ) -> float:
     """Signal-buy pool for flats after reserving underweight long top-ups."""
     raw = effective_buy_pool(
@@ -116,6 +141,7 @@ def flat_buy_pool_usd(
         symbols=symbols,
         positions=positions,
         prices=prices,
+        exit_only_invested_usd=exit_only_invested_usd,
     )
     return max(0.0, raw - reserved)
 
@@ -281,6 +307,8 @@ class RebalancePlanResult:
     skipped: list[RebalanceSkip] = field(default_factory=list)
     target_per_sleeve: float = 0.0
     n_symbols: int = 0
+    deployable_budget_usd: float = 0.0
+    exit_only_invested_usd: float = 0.0
 
     @property
     def sells(self) -> list[RebalanceOrder]:
@@ -299,10 +327,14 @@ def plan_rebalance_to_equal(
     budget_usd: float,
     spendable_usd: float,
     sma20_ok: Mapping[str, bool] | None = None,
+    exit_only_invested_usd: float = 0.0,
 ) -> RebalancePlanResult:
-    """Whole-share orders so each symbol targets ``budget_usd / N``.
+    """Whole-share orders so each symbol targets ``deployable / N``.
 
-    - Budget 0 → sell all listed longs; no buys.
+    Deployable = ``budget_usd - exit_only_invested_usd`` so soft-rotate overlap
+    (drops still long) cannot push total invested above the wallet.
+
+    - Deployable 0 → sell all listed longs; no buys.
     - Overweight → SELL down toward target (never below 0).
     - Underweight → BUY up toward target only when ``sma20_ok[sym]`` is True
       (missing key treated as False — fail closed). Never buy above target.
@@ -319,10 +351,12 @@ def plan_rebalance_to_equal(
             seen.add(s)
             ordered.append(s)
     n = len(ordered)
+    exit_only_inv = max(0.0, float(exit_only_invested_usd))
     if n == 0:
-        return RebalancePlanResult()
+        return RebalancePlanResult(exit_only_invested_usd=exit_only_inv)
 
-    budget = max(0.0, float(budget_usd))
+    wallet = max(0.0, float(budget_usd))
+    budget = deployable_budget_usd(wallet, exit_only_inv)
     spendable = max(0.0, float(spendable_usd))
     target = 0.0 if budget <= 1e-9 else budget / float(n)
     gate = {str(k).upper(): bool(v) for k, v in (sma20_ok or {}).items()}
@@ -451,6 +485,8 @@ def plan_rebalance_to_equal(
         skipped=skipped,
         target_per_sleeve=target,
         n_symbols=n,
+        deployable_budget_usd=budget,
+        exit_only_invested_usd=exit_only_inv,
     )
 
 

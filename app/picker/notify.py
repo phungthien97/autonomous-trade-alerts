@@ -167,6 +167,27 @@ def build_success_email_subject(
     return f"{prefix} Mon apply: {names}"
 
 
+def build_crash_email_body(*, error: str, attempts: int) -> str:
+    return (
+        "\n".join(
+            [
+                "PICKER ranking FAILED — retries exhausted",
+                "",
+                "What this means",
+                f"  The weekend ranking crashed {attempts} time(s) and gave up.",
+                "  pending_selection was NOT overwritten — current sleeves stay as-is.",
+                "",
+                "Details",
+                f"  Error: {error}",
+                "",
+                "Next step: fix IB Gateway / client id, then:",
+                "  PICKER_FORCE=1 python -m app.picker_rank",
+            ]
+        )
+        + "\n"
+    )
+
+
 def build_skip_email_body(*, recent_run: str, within_days: int, next_hint: str) -> str:
     return (
         "\n".join(

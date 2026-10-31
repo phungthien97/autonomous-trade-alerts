@@ -2,14 +2,24 @@
 Description=S&P 500 picker weekend ranking
 After=ibgateway.service network.target
 Wants=ibgateway.service
+# Cap automatic unit restarts if the process keeps exiting non-zero.
+StartLimitIntervalSec=2h
+StartLimitBurst=5
 
 [Service]
 Type=oneshot
 User=ubuntu
 WorkingDirectory=/opt/autonomous-trade-alerts
 Environment=DISPLAY=:1
-Environment=IB_CLIENT_ID=7
+# Load .env first, then force picker client id so IB_CLIENT_ID=1 from .env
+# cannot steal live-worker's slot (Error 326 / timeout).
 EnvironmentFile=-/opt/autonomous-trade-alerts/.env
-# J2: live pending writes + weekend summary email (was --dry-run --no-email for J1).
-# Client id 7 avoids clash with live-worker (usually clientId 1).
+Environment=IB_CLIENT_ID=7
+Environment=PICKER_IB_CLIENT_ID=7
+# In-process retries cover most Gateway flaps; systemd retries the whole job
+# if the process still exits non-zero.
+Restart=on-failure
+RestartSec=120
+# J2: live pending writes + weekend summary email.
+# Client id 7 avoids clash with live-worker (1) and dashboard (9).
 ExecStart=/opt/autonomous-trade-alerts/.venv/bin/python -m app.picker_rank

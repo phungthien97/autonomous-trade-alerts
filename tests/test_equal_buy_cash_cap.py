@@ -27,6 +27,25 @@ def test_mid_cycle_reserve_keeps_equal_budgets() -> None:
     assert second > buggy
 
 
+def test_inflight_notional_prevents_oversubscribe_when_cash_stale() -> None:
+    """Submitted-not-filled: subtract inflight so equal caps cannot sum above pool."""
+    n_active = 5
+    pool = 50_000.0
+    inflight = 0.0
+    caps: list[float] = []
+    for i in range(5):
+        available = max(0.0, pool - inflight)
+        cap = sleeve_buy_budget(available, n_active, n_already_long=i)
+        caps.append(cap)
+        inflight += cap
+    assert sum(caps) == pytest.approx(50_000.0)
+    # Without inflight haircut, shrinking denominator oversubscribes.
+    buggy_total = 0.0
+    for i in range(5):
+        buggy_total += sleeve_buy_budget(pool, n_active, n_already_long=i)
+    assert buggy_total > 50_000.0
+
+
 def test_cad_spendable_usd_feeds_equal_budget() -> None:
     snap = AccountSnapshot(
         cash_usd=1400.0,

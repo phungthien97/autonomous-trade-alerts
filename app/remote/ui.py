@@ -14,6 +14,7 @@ from app.live.control import (
     DAILY_ORDER_CAP_MIN,
     TRADING_BUDGET_USD_MAX,
     ack_risk,
+    bot_book_symbols,
     disable_trading,
     enable_trading,
     execute_rebalance_to_equal,
@@ -947,14 +948,30 @@ def _rebalance_order_rows(
 def _rebalance_symbols(
     money: dict[str, Any], status: dict[str, Any], live_paths: LivePaths
 ) -> list[str]:
-    """Active non-exit_only symbols (include flats at 0 shares)."""
+    """Active non-exit_only bot symbols only (never orphan broker holdings)."""
+    del money  # holdings must not expand the rebalance universe
     exit_only: set[str] = set()
     picker_paths = PickerPaths(project_root=live_paths.project_root)
     active = load_active(picker_paths.active_selection_path)
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: object) -> None:
+        if not raw:
+            return
+        sym = str(raw).upper()
+        if sym in seen or sym in exit_only:
+            return
+        seen.add(sym)
+        ordered.append(sym)
+
     if active is not None:
         for row in active.symbols:
+            sym = str(row.symbol).upper()
             if row.exit_only:
-                exit_only.add(str(row.symbol).upper())
+                exit_only.add(sym)
+                continue
+            _add(sym)
     assets = status.get("assets")
     if isinstance(assets, dict):
         for sym, row in assets.items():
@@ -964,21 +981,9 @@ def _rebalance_symbols(
         for a in assets:
             if isinstance(a, dict) and a.get("exit_only") and a.get("symbol"):
                 exit_only.add(str(a["symbol"]).upper())
-
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for src in (
-        status.get("symbols") or [],
-        [h.get("symbol") for h in (money.get("holdings") or []) if isinstance(h, dict)],
-    ):
-        for raw in src:
-            if not raw:
-                continue
-            sym = str(raw).upper()
-            if sym in seen or sym in exit_only:
-                continue
-            seen.add(sym)
-            ordered.append(sym)
+    # Config/live status symbols (flats included); still never pull holdings orphans.
+    for raw in status.get("symbols") or []:
+        _add(raw)
     return ordered
 
 
@@ -1005,10 +1010,12 @@ def _render_trading_budget_section(
     st.subheader("Trading budget")
     st.caption(
         f"Bot wallet (stored in USD for share sizing; amounts shown in **{display}**). "
-        "**Save & rebalance** equalizes each *active* (non-exit-only) sleeve to budget÷N "
+        "**Save & rebalance** equalizes each *active* (non-exit-only) sleeve to "
+        "**(budget − exit-only invested) ÷ N** "
         "(sell overweight · buy underweight only above SMA20 · US RTH). "
-        "It does **not** sell picker **exit-only** drops — those wait for a peak/trough SELL "
-        "(or use **Reduce** to free capital). "
+        "During soft-rotate, capital still in **exit-only** drops shrinks active targets "
+        "so total invested stays ≤ budget — drops are **not** sold by rebalance "
+        "(wait for a peak/trough SELL, or use **Reduce**). "
         "To change the wallet **without** trading, use **Save wallet only**. "
         "Cash-out (sells only, no equal buys) → **Reduce** below."
     )
@@ -1056,9 +1063,36 @@ def _render_trading_budget_section(
     wdraw = money.get("withdrawable_usd")
     symbols_live = _rebalance_symbols(money, status, live_paths)
     n_sleeves = len(symbols_live)
+    # Exit-only longs still count against the wallet during soft-rotate.
+    exit_only_inv = 0.0
+    picker_paths = PickerPaths(project_root=live_paths.project_root)
+    active_sel = load_active(picker_paths.active_selection_path)
+    exit_syms: set[str] = set()
+    if active_sel is not None:
+        exit_syms = {str(row.symbol).upper() for row in active_sel.symbols if row.exit_only}
+    for h in money.get("holdings") or []:
+        if not isinstance(h, dict):
+            continue
+        sym = str(h.get("symbol") or "").upper()
+        if sym not in exit_syms:
+            continue
+        try:
+            mv = h.get("stock_value")
+            if mv is None:
+                mv = h.get("mkt_value")
+            if mv is None:
+                mv = float(h.get("shares") or 0.0) * float(h.get("price") or 0.0)
+            exit_only_inv += max(0.0, float(mv or 0.0))
+        except (TypeError, ValueError):
+            continue
+    deployable = (
+        max(0.0, float(bud) - exit_only_inv)
+        if isinstance(bud, (int, float))
+        else None
+    )
     target_sleeve = (
-        float(bud) / float(n_sleeves)
-        if isinstance(bud, (int, float)) and n_sleeves > 0
+        float(deployable) / float(n_sleeves)
+        if deployable is not None and n_sleeves > 0
         else None
     )
 
@@ -1103,7 +1137,10 @@ def _render_trading_budget_section(
     m2.metric(
         "Per sleeve",
         _show(target_sleeve) if target_sleeve is not None else "—",
-        help=f"Equal target = budget ÷ {n_sleeves or 'N'} active sleeves (what Save & rebalance aims for).",
+        help=(
+            f"Equal target = (budget − exit-only) ÷ {n_sleeves or 'N'} active sleeves "
+            f"(exit-only invested {_show(exit_only_inv)} during soft-rotate)."
+        ),
     )
     m3.metric(
         "In stocks",
@@ -1205,6 +1242,7 @@ def _render_trading_budget_section(
                     budget_usd=usd_val,
                     spendable_usd=float(spend_u or 0),
                     fallback_prices=fallback_px,
+                    paths=live_paths,
                 )
             finally:
                 ib = getattr(broker, "ib", None)
@@ -1303,16 +1341,31 @@ def _render_trading_budget_section(
             st.error(str(exc))
 
     with st.expander("Cash out / Reduce to budget", expanded=False):
+        book_syms = bot_book_symbols(live_paths)
         st.caption(
-            "Pro-rata **sells only** down to the **saved** budget (no buys; "
-            "budget **0** = flatten listed longs). Prefer **Disable trading** under Safety first. "
+            "Pro-rata **sells only** of **bot-book** longs (live config ∪ active, incl. exit-only) "
+            "down to the **saved** budget — never unmanaged IBKR positions. "
+            "budget **0** = flatten bot book. Requires trading enabled + US RTH; pauses the worker. "
             "Withdraw freed cash in IBKR yourself. For equal sleeves use **Save & rebalance** above."
+        )
+        st.caption(
+            f"Bot book: {', '.join(book_syms) if book_syms else '— (empty → Reduce refused)'}"
         )
         confirm = st.text_input(
             "Type REDUCE to unlock execute",
             value="",
             key="remote_reduce_confirm",
         )
+        can_reduce = (
+            confirm.strip().upper() == "REDUCE"
+            and trading_on
+            and rth_now
+            and bool(book_syms)
+        )
+        if not trading_on:
+            st.warning("Trading is disabled — enable under Safety before Reduce.")
+        elif not rth_now:
+            st.warning("Outside US RTH — Reduce is locked (same gate as Save & rebalance).")
         r1, r2 = st.columns(2)
         if r1.button("Preview sells", use_container_width=True, key="remote_reduce_preview"):
             try:
@@ -1325,21 +1378,27 @@ def _render_trading_budget_section(
                 st.error(str(exc))
                 saved = None
             if saved is not None:
+                book_set = {s.upper() for s in book_syms}
                 pos_map = {
-                    str(h.get("symbol")): float(h.get("shares") or 0)
+                    str(h.get("symbol")).upper(): float(h.get("shares") or 0)
                     for h in (money.get("holdings") or [])
-                    if h.get("symbol")
+                    if h.get("symbol") and str(h.get("symbol")).upper() in book_set
                 }
                 px_map = {
-                    str(h.get("symbol")): float(h["price"])
+                    str(h.get("symbol")).upper(): float(h["price"])
                     for h in (money.get("holdings") or [])
-                    if h.get("symbol") and isinstance(h.get("price"), (int, float))
+                    if h.get("symbol")
+                    and str(h.get("symbol")).upper() in book_set
+                    and isinstance(h.get("price"), (int, float))
                 }
                 plan = preview_reduce_to_budget(
-                    positions=pos_map, prices=px_map, budget_usd=saved
+                    positions=pos_map,
+                    prices=px_map,
+                    budget_usd=saved,
+                    paths=live_paths,
                 )
                 if not plan:
-                    st.info("Nothing to sell — already at or under budget.")
+                    st.info("Nothing to sell — already at or under budget (bot book).")
                 else:
                     _show_table(
                         st,
@@ -1347,12 +1406,12 @@ def _render_trading_budget_section(
                         "Nothing to sell.",
                     )
                     notion = sum(float(p.get("notional") or 0) for p in plan)
-                    st.caption(f"Total notional ≈ {_show(notion)}")
+                    st.caption(f"Total notional ≈ {_show(notion)} (bot book only)")
         if r2.button(
             "Execute reduce",
             use_container_width=True,
             key="remote_reduce_exec",
-            disabled=confirm.strip().upper() != "REDUCE",
+            disabled=not can_reduce,
         ):
             try:
                 saved = (

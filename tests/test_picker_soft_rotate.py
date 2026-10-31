@@ -19,3 +19,16 @@ def test_plan_soft_rotate_empty_pending_exits_all() -> None:
     assert plan.dropped == ["A", "B"]
     assert plan.flags["A"].exit_only is True
     assert plan.flags["B"].exit_only is True
+
+
+def test_kept_preserves_prior_awaiting_first_buy() -> None:
+    """Re-picking an unbought add must NOT clear the SMA20 first-buy gate."""
+    plan = plan_soft_rotate(
+        ["A", "B"],
+        ["A", "B", "C"],
+        prior_awaiting={"A": True, "B": False},
+    )
+    assert plan.kept == ["A", "B"]
+    assert plan.flags["A"].awaiting_first_buy is True
+    assert plan.flags["B"].awaiting_first_buy is False
+    assert plan.flags["C"].awaiting_first_buy is True

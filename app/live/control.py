@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 
 from app.live.budget import (
     RebalancePlanResult,
+    invested_usd,
     plan_rebalance_to_equal,
     plan_reduce_to_budget,
 )
@@ -97,14 +98,67 @@ def set_trading_budget_usd(paths: LivePaths | None = None, budget_usd: float = 0
     return value
 
 
+def bot_book_symbols(paths: LivePaths | None = None) -> list[str]:
+    """Symbols the bot may touch: live config ∪ active_selection (incl. exit_only).
+
+    Never expand to arbitrary IBKR longs — Reduce/rebalance must stay inside this set.
+    """
+    chosen = _paths(paths)
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(raw: object) -> None:
+        sym = str(raw or "").upper().strip()
+        if not sym or sym in seen:
+            return
+        seen.add(sym)
+        ordered.append(sym)
+
+    if chosen.config_path.exists():
+        config = load_live_config(chosen.config_path)
+        for sym in config.symbols:
+            _add(sym)
+    picker_paths = PickerPaths(project_root=chosen.project_root)
+    active = load_active(picker_paths.active_selection_path)
+    if active is not None:
+        for row in active.symbols:
+            _add(row.symbol)
+    return ordered
+
+
+def scoped_bot_positions(
+    paths: LivePaths | None,
+    positions: Mapping[str, float],
+) -> dict[str, float]:
+    """Longs in ``positions`` that belong to the bot book (fail closed if book empty)."""
+    book = {s.upper() for s in bot_book_symbols(paths)}
+    if not book:
+        return {}
+    out: dict[str, float] = {}
+    for key, qty in positions.items():
+        sym = str(key).upper()
+        if sym not in book:
+            continue
+        shares = float(qty or 0.0)
+        if shares > 1e-9:
+            out[sym] = shares
+    return out
+
+
 def preview_reduce_to_budget(
     *,
     positions: Mapping[str, float],
     prices: Mapping[str, float],
     budget_usd: float,
+    paths: LivePaths | None = None,
 ) -> list[dict[str, Any]]:
-    """Dry-run reduce plan (no orders)."""
-    sells = plan_reduce_to_budget(positions, prices, budget_usd=float(budget_usd))
+    """Dry-run reduce plan (no orders). Scopes to bot book when ``paths`` is set."""
+    scoped = (
+        scoped_bot_positions(paths, positions)
+        if paths is not None
+        else {str(k).upper(): float(v) for k, v in positions.items() if float(v or 0) > 1e-9}
+    )
+    sells = plan_reduce_to_budget(scoped, prices, budget_usd=float(budget_usd))
     return [
         {
             "symbol": s.symbol,
@@ -181,6 +235,31 @@ def _sma20_ok_map(
     return out
 
 
+def _exit_only_symbols(paths: LivePaths) -> set[str]:
+    """Symbols currently marked exit_only in active_selection (soft-rotate drops)."""
+    picker_paths = PickerPaths(project_root=paths.project_root)
+    active = load_active(picker_paths.active_selection_path)
+    if active is None:
+        return set()
+    return {str(row.symbol).upper() for row in active.symbols if row.exit_only}
+
+
+def _exit_only_invested_usd(
+    paths: LivePaths,
+    positions: Mapping[str, float],
+    prices: Mapping[str, float],
+) -> float:
+    """USD mark of exit-only longs still held (counts against the wallet)."""
+    exit_syms = _exit_only_symbols(paths)
+    if not exit_syms:
+        return 0.0
+    subset = {
+        sym: float(positions.get(sym, 0.0) or 0.0)
+        for sym in exit_syms
+    }
+    return invested_usd(subset, prices)
+
+
 def _order_row(o: Any) -> dict[str, Any]:
     return {
         "symbol": o.symbol,
@@ -211,6 +290,7 @@ def preview_rebalance_to_equal(
     budget_usd: float,
     spendable_usd: float,
     sma20_ok: Mapping[str, bool] | None = None,
+    exit_only_invested_usd: float = 0.0,
 ) -> dict[str, Any]:
     """Dry-run equal-sleeve rebalance (no orders)."""
     plan = plan_rebalance_to_equal(
@@ -220,6 +300,7 @@ def preview_rebalance_to_equal(
         budget_usd=float(budget_usd),
         spendable_usd=float(spendable_usd),
         sma20_ok=sma20_ok,
+        exit_only_invested_usd=float(exit_only_invested_usd),
     )
     return _rebalance_summary(plan, dry_run=True, budget_usd=float(budget_usd))
 
@@ -231,13 +312,17 @@ def preview_rebalance_from_broker(
     budget_usd: float,
     spendable_usd: float | None = None,
     fallback_prices: Mapping[str, float] | None = None,
+    paths: LivePaths | None = None,
 ) -> dict[str, Any]:
     """Build SMA20-aware rebalance preview from a live broker connection."""
+    chosen = _paths(paths)
     syms = [str(s).upper() for s in symbols if str(s).strip()]
     positions = {str(k).upper(): float(v) for k, v in (broker.get_positions() or {}).items()}
     for sym in syms:
         positions.setdefault(sym, 0.0)
-    prices = _broker_prices(broker, syms)
+    exit_syms = _exit_only_symbols(chosen)
+    price_syms = list(dict.fromkeys([*syms, *sorted(exit_syms)]))
+    prices = _broker_prices(broker, price_syms)
     for sym, px in (fallback_prices or {}).items():
         key = str(sym).upper()
         try:
@@ -252,6 +337,7 @@ def preview_rebalance_from_broker(
         spendable = float(getattr(snap, "spendable_usd", 0.0) or 0.0)
     else:
         spendable = float(spendable_usd)
+    exit_only_inv = _exit_only_invested_usd(chosen, positions, prices)
     return preview_rebalance_to_equal(
         symbols=syms,
         positions=positions,
@@ -259,6 +345,7 @@ def preview_rebalance_from_broker(
         budget_usd=float(budget_usd),
         spendable_usd=spendable,
         sma20_ok=sma_ok,
+        exit_only_invested_usd=exit_only_inv,
     )
 
 
@@ -275,6 +362,8 @@ def _rebalance_summary(
         "dry_run": dry_run,
         "executed": executed,
         "budget_usd": float(budget_usd),
+        "deployable_budget_usd": round(float(plan.deployable_budget_usd), 2),
+        "exit_only_invested_usd": round(float(plan.exit_only_invested_usd), 2),
         "target_per_sleeve": round(float(plan.target_per_sleeve), 2),
         "n_symbols": int(plan.n_symbols),
         "sells": sells,
@@ -408,7 +497,9 @@ def execute_rebalance_to_equal(
         positions = {
             str(k).upper(): float(v) for k, v in (broker.get_positions() or {}).items()
         }
-        prices = _broker_prices(broker, syms)
+        exit_syms = _exit_only_symbols(chosen)
+        price_syms = list(dict.fromkeys([*syms, *sorted(exit_syms)]))
+        prices = _broker_prices(broker, price_syms)
         # State last_price fallback.
         if chosen.state_path.exists():
             raw = json.loads(chosen.state_path.read_text(encoding="utf-8"))
@@ -426,6 +517,7 @@ def execute_rebalance_to_equal(
         sma_ok = _sma20_ok_map(broker, syms, prices)
         snap = broker.get_account_snapshot()
         spendable = float(getattr(snap, "spendable_usd", 0.0) or 0.0)
+        exit_only_inv = _exit_only_invested_usd(chosen, positions, prices)
 
         plan = plan_rebalance_to_equal(
             syms,
@@ -434,6 +526,7 @@ def execute_rebalance_to_equal(
             budget_usd=float(budget_usd),
             spendable_usd=spendable,
             sma20_ok=sma_ok,
+            exit_only_invested_usd=exit_only_inv,
         )
         summary = _rebalance_summary(plan, dry_run=dry_run, budget_usd=float(budget_usd))
         if dry_run or not plan.orders:
@@ -477,6 +570,9 @@ def execute_rebalance_to_equal(
         live_pos = {
             str(k).upper(): float(v) for k, v in (broker.get_positions() or {}).items()
         }
+        # Recompute exit-only mark after sells (drops may have sold via other path;
+        # rebalance itself never sells exit_only).
+        exit_only_inv_after = _exit_only_invested_usd(chosen, live_pos, prices)
         # Rebuild buys only with post-sell cash (no double-count sell proceeds).
         plan_buys = plan_rebalance_to_equal(
             syms,
@@ -485,6 +581,7 @@ def execute_rebalance_to_equal(
             budget_usd=float(budget_usd),
             spendable_usd=spendable_after,
             sma20_ok=sma_ok,
+            exit_only_invested_usd=exit_only_inv_after,
         )
         bought_syms: list[str] = []
         for o in plan_buys.buys:
@@ -514,8 +611,10 @@ def execute_rebalance_to_equal(
             skipped=list(plan.skipped) + [
                 s for s in plan_buys.skipped if s.reason == "cash_clamp"
             ],
-            target_per_sleeve=plan.target_per_sleeve,
+            target_per_sleeve=plan_buys.target_per_sleeve,
             n_symbols=plan.n_symbols,
+            deployable_budget_usd=plan_buys.deployable_budget_usd,
+            exit_only_invested_usd=plan_buys.exit_only_invested_usd,
         )
         out = _rebalance_summary(
             final_plan, dry_run=False, budget_usd=float(budget_usd), executed=True
@@ -535,52 +634,107 @@ def execute_reduce_to_budget(
     budget_usd: float,
     dry_run: bool = True,
     paths: LivePaths | None = None,
+    pause_worker: bool = True,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Market-sell down to ``budget_usd`` invested. Reuses flatten polling when budget is 0.
+    """Market-sell bot-book longs down to ``budget_usd`` invested.
 
+    Scopes to live config ∪ active_selection only (never unmanaged IBKR longs).
+    Requires trading enabled + US RTH when not dry-run; pauses live-worker like rebalance.
     Does not change ``trading_budget_usd`` (caller should already have set it).
     """
     from app.live.paper_reset import flatten_longs
 
-    positions = broker.get_positions()
-    prices = _broker_prices(broker)
+    chosen = _paths(paths)
+    book = bot_book_symbols(chosen)
+    if not book:
+        raise ValueError("no bot-book symbols — refusing Reduce (fail closed)")
+    _require_trading_enabled(chosen)
+    if not dry_run:
+        _require_rth(now)
 
-    plan = plan_reduce_to_budget(positions, prices, budget_usd=float(budget_usd))
-    summary: dict[str, Any] = {
-        "dry_run": dry_run,
-        "budget_usd": float(budget_usd),
-        "sells": [
-            {"symbol": s.symbol, "shares": s.shares, "price": s.price, "notional": s.notional}
-            for s in plan
-        ],
-        "notional": round(sum(s.notional for s in plan), 2),
-    }
-    if dry_run or not plan:
-        return summary
+    worker_paused = False
+    if pause_worker and not dry_run:
+        _pause_live_worker(dry_run=False)
+        worker_paused = True
 
-    ib = getattr(broker, "ib", None)
-    for s in plan:
-        result = broker.place_market_order(s.symbol, "SELL", s.shares)
-        print(f"reduce: SELL {s.symbol} x {s.shares} -> {getattr(result, 'status', result)}")
-        if ib is not None and hasattr(ib, "sleep"):
-            ib.sleep(1)
+    try:
+        raw_positions = {
+            str(k).upper(): float(v) for k, v in (broker.get_positions() or {}).items()
+        }
+        positions = scoped_bot_positions(chosen, raw_positions)
+        prices = _broker_prices(broker, list(dict.fromkeys([*book, *positions])))
+        # State last_price fallback for marks.
+        if chosen.state_path.exists():
+            raw = json.loads(chosen.state_path.read_text(encoding="utf-8"))
+            for sym, row in (raw.get("assets") or {}).items():
+                key = str(sym).upper()
+                if key in prices:
+                    continue
+                try:
+                    px = float(row.get("last_price"))
+                except (TypeError, ValueError):
+                    continue
+                if px > 0:
+                    prices[key] = px
 
-    if float(budget_usd) <= 1e-9:
-        # Urgent full exit: keep selling until flat.
-        left = {str(s): float(q) for s, q in broker.get_positions().items() if float(q) > 1e-9}
-        if left:
-            flatten_longs(broker, left, dry_run=False)
-    elif ib is not None and hasattr(ib, "sleep"):
-        ib.sleep(3)
+        plan = plan_reduce_to_budget(positions, prices, budget_usd=float(budget_usd))
+        summary: dict[str, Any] = {
+            "dry_run": dry_run,
+            "budget_usd": float(budget_usd),
+            "bot_book": book,
+            "sells": [
+                {
+                    "symbol": s.symbol,
+                    "shares": s.shares,
+                    "price": s.price,
+                    "notional": s.notional,
+                }
+                for s in plan
+            ],
+            "notional": round(sum(s.notional for s in plan), 2),
+        }
+        if dry_run or not plan:
+            return summary
 
-    summary["executed"] = True
-    if paths is not None:
-        chosen = _paths(paths)
+        ib = getattr(broker, "ib", None)
+        for s in plan:
+            result = broker.place_market_order(s.symbol, "SELL", s.shares)
+            print(
+                f"reduce: SELL {s.symbol} x {s.shares} -> {getattr(result, 'status', result)}"
+            )
+            if ib is not None and hasattr(ib, "sleep"):
+                ib.sleep(1)
+
+        if float(budget_usd) <= 1e-9:
+            # Urgent full exit of bot book only — never flatten unmanaged longs.
+            left = scoped_bot_positions(chosen, broker.get_positions() or {})
+            if left:
+                flatten_longs(broker, left, dry_run=False)
+        elif ib is not None and hasattr(ib, "sleep"):
+            ib.sleep(3)
+
+        summary["executed"] = True
         if chosen.state_path.exists():
             raw = json.loads(chosen.state_path.read_text(encoding="utf-8"))
             raw["trading_budget_usd"] = float(budget_usd)
+            live_pos = {
+                str(k).upper(): float(v)
+                for k, v in (broker.get_positions() or {}).items()
+            }
+            assets = raw.setdefault("assets", {})
+            if isinstance(assets, dict):
+                for sym in book:
+                    if sym in assets:
+                        assets[sym]["shares"] = max(0.0, float(live_pos.get(sym, 0.0) or 0.0))
             chosen.state_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
-    return summary
+        return summary
+    finally:
+        if worker_paused:
+            try:
+                _resume_live_worker(dry_run=False)
+            except Exception as exc:  # noqa: BLE001
+                print(f"reduce: failed to restart live-worker.timer: {exc}")
 
 
 def disable_trading(paths: LivePaths | None = None) -> None:

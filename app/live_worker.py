@@ -348,6 +348,8 @@ def run_live_once(
         if float(report.corrected.shares.get(symbol, assets.get(symbol, {}).get("shares", 0.0))) > 0
         and not (active_flags.get(symbol) and active_flags[symbol].exit_only)
     )
+    # Same-cycle BUY notional reserved until spendable/invested catch up to fills.
+    inflight_buy_usd = 0.0
 
     for asset in config.assets:
         symbol = asset.symbol
@@ -477,6 +479,8 @@ def run_live_once(
                 # Wallet pool for flats: unused minus USD reserved to top
                 # underweight longs up to budget/N, then equal among flats
                 # (+ 1-share stretch). Missing FX → 0.
+                # Also subtract same-cycle in-flight BUY notional so submitted
+                # (not-yet-filled) orders cannot oversubscribe cash.
                 live_pos = broker.get_positions()
                 marks = dict(price_by_symbol)
                 price_book = getattr(broker, "inner", broker)
@@ -489,6 +493,14 @@ def run_live_once(
                     for a in config.assets
                     if a.enabled and not (active_flags.get(a.symbol) and active_flags[a.symbol].exit_only)
                 ] or list(config.symbols)
+                exit_only_inv = invested_usd(
+                    {
+                        a.symbol: float(live_pos.get(a.symbol, 0.0) or 0.0)
+                        for a in config.assets
+                        if active_flags.get(a.symbol) and active_flags[a.symbol].exit_only
+                    },
+                    marks,
+                )
                 pool = flat_buy_pool_usd(
                     config.trading_budget_usd,
                     symbols=active_syms,
@@ -496,7 +508,9 @@ def run_live_once(
                     prices=marks,
                     invested_usd=invested,
                     spendable_usd=float(snapshot.spendable_usd),
+                    exit_only_invested_usd=exit_only_inv,
                 )
+                pool = max(0.0, float(pool) - float(inflight_buy_usd))
                 acct_ccy = str(getattr(snapshot, "account_currency", "") or "").upper()
                 if pool <= 0 and acct_ccy not in {"USD", ""} and float(snapshot.spendable_usd) <= 0:
                     print(
@@ -515,11 +529,16 @@ def run_live_once(
                     price=price,
                     allow_fractional=allow_frac,
                 )
-                # Never size a flat signal buy above equal sleeve target.
+                # Never size a flat signal buy above equal sleeve target
+                # (deployable = budget − exit_only invested during soft-rotate).
                 if config.trading_budget_usd is not None and n_active > 0:
                     buy_cap = min(
                         float(buy_cap),
-                        equal_sleeve_target_usd(float(config.trading_budget_usd), n_active),
+                        equal_sleeve_target_usd(
+                            float(config.trading_budget_usd),
+                            n_active,
+                            exit_only_invested_usd=exit_only_inv,
+                        ),
                     )
             else:
                 # Fixed paper book: sleeve cash, else budget-clamped spendable.
@@ -535,6 +554,7 @@ def run_live_once(
                         invested_usd=invested,
                         spendable_usd=float(snapshot.spendable_usd),
                     )
+                    book = max(0.0, float(book) - float(inflight_buy_usd))
                     buy_cap = resolve_equal_buy_cash_cap(
                         book,
                         n_active_non_exit_only=n_active,
@@ -710,8 +730,14 @@ def run_live_once(
             # is live at the broker. Waiting for fill + awaiting_first_buy clear
             # left n_long stuck, so later same-cycle buys got spendable/n_flat
             # after cash already dropped → undersized sleeves.
+            # Also reserve estimated notional so later legs cannot oversubscribe
+            # while spendable still shows pre-fill cash.
             if intent.side == "BUY" and result.status in {"submitted", "filled", "partial"}:
                 n_long += 1
+                est = float(intent.quantity) * float(price) + float(
+                    getattr(intent, "estimated_fees", 0.0) or 0.0
+                )
+                inflight_buy_usd += max(0.0, est)
         saved = probe if (signal is None or filled) else before
         if filled:
             saved.shares = float(broker.get_positions().get(symbol, saved.shares))
@@ -964,10 +990,15 @@ def _unpack_hourly_book(
 
 
 def _latest_prices(
-    symbols: list[str], broker_inner=None
+    symbols: list[str],
+    broker_inner=None,
+    *,
+    allow_yahoo_fallback: bool = False,
 ) -> tuple[dict[str, float], dict[str, str], dict[str, list[float]], str]:
-    """IBKR RTH hourly TRADES primary; Yahoo is an explicit last-resort fallback.
+    """IBKR RTH hourly TRADES primary.
 
+    Yahoo is fail-closed off for live IBKR cycles (wrong SMA/signals → real orders).
+    Memory/paper brokers may pass ``allow_yahoo_fallback=True``.
     Also returns per-symbol close series for the first-buy SMA20 gate.
     """
     if not symbols:
@@ -980,9 +1011,19 @@ def _latest_prices(
             if prices:
                 print(f"price_source=ibkr_rth_hourly n={len(prices)} closes={len(closes)}")
                 return prices, bars, closes, "ibkr_rth_hourly"
-            print("price_source=ibkr_empty; yahoo_fallback", file=sys.stderr)
+            print("price_source=ibkr_empty; refusing yahoo on live path", file=sys.stderr)
+            if not allow_yahoo_fallback:
+                return {}, {}, {}, "ibkr_unavailable"
         except Exception as exc:  # noqa: BLE001
-            print(f"price_source=ibkr_error ({exc}); yahoo_fallback", file=sys.stderr)
+            print(
+                f"price_source=ibkr_error ({exc}); refusing yahoo on live path",
+                file=sys.stderr,
+            )
+            if not allow_yahoo_fallback:
+                return {}, {}, {}, "ibkr_unavailable"
+    if not allow_yahoo_fallback:
+        print("price_source=unavailable; no yahoo fallback", file=sys.stderr)
+        return {}, {}, {}, "ibkr_unavailable"
     prices, bars, closes = _latest_prices_yahoo(list(symbols))
     if prices:
         print(f"price_source=yahoo_fallback n={len(prices)} closes={len(closes)}")
@@ -1057,7 +1098,13 @@ def main(argv: list[str] | None = None) -> int:
     risk = RiskController(paths.risk_path)
     audit = AuditLog(paths.audit_log_path)
     now = datetime.now(timezone.utc)
-    prices, bars, closes, price_source = _latest_prices(list(config.symbols), broker_inner=inner)
+    # Live IBKR: fail closed without Yahoo. Memory broker may use Yahoo for local soak.
+    allow_yahoo = str(args.broker).lower() == "memory"
+    prices, bars, closes, price_source = _latest_prices(
+        list(config.symbols),
+        broker_inner=inner,
+        allow_yahoo_fallback=allow_yahoo,
+    )
     if not prices:
         print("No prices available; skipping cycle", file=sys.stderr)
         _write_last_cycle(

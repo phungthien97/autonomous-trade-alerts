@@ -1,4 +1,5 @@
 from app.picker.notify import (
+    build_crash_email_body,
     build_failure_email_body,
     build_success_email_body,
     build_success_email_subject,
@@ -59,3 +60,10 @@ def test_failure_email_keep_previous() -> None:
     assert "FAILED" in body
     assert "NOT overwritten" in body
     assert "What this means" in body
+
+
+def test_crash_email_mentions_retries() -> None:
+    body = build_crash_email_body(error="TimeoutError()", attempts=3)
+    assert "retries exhausted" in body
+    assert "TimeoutError()" in body
+    assert "PICKER_FORCE=1" in body
