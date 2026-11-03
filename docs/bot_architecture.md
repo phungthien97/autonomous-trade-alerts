@@ -198,24 +198,25 @@ flowchart TD
 
 Select logic: `app/picker/rank.py` → `select_symbols()`.
 
-### Monday apply (soft rotate)
+### Monday apply (hard rotate)
 
 When `live_worker` sees RTH **and** `now ≥ apply_after`:
 
 ```mermaid
 flowchart TD
-  P["pending symbols"] --> Diff["plan_soft_rotate vs active"]
-  Diff --> Keep["Kept: preserve awaiting_first_buy<br/>until a real fill"]
-  Diff --> Add["Added: awaiting_first_buy<br/>SMA20 before first BUY"]
-  Diff --> Drop["Dropped: exit_only<br/>no new BUY; sell when signal fires<br/>prune from book once flat"]
-  Keep --> Write["Write live + V1 + V2 configs<br/>+ active_selection.json<br/>mark pending applied"]
-  Add --> Write
+  P["pending symbols"] --> Diff["plan_hard_rotate vs active"]
+  Diff --> Target["All targets: awaiting_first_buy"]
+  Diff --> Drop["Dropped: exit_only until flat"]
+  Diff --> Phase["rotation_phase=flattening"]
+  Phase --> Flat["Worker force-SELLS entire bot book"]
+  Flat --> Enter["Book flat → idle; SMA20 first buys"]
+  Target --> Write["Write live + V1 + V2 + active"]
   Drop --> Write
 ```
 
-Files: `app/picker/apply.py`, `soft_rotate.py`, `apply_live.py`, `apply_paper.py`, `active.py` (`prune_exit_only_if_flat`).
+Files: `app/picker/apply.py`, `hard_rotate.py`, `apply_live.py`, `apply_paper.py`, `active.py` (`rotation_phase`).
 
-**Save & rebalance vs soft-rotate:** rebalance targets **non-exit-only** actives only, sized from **deployable = budget − exit-only invested**. Capital stuck in exit-only drops is freed by a strategy SELL (or dashboard **Reduce**), not by Save & rebalance; until then active equal sleeves are smaller so the wallet ceiling holds.
+**Hard rotate:** sell the whole bot book first (including kept names), then buy the new slate with equal sleeves / SMA20. No soft-rotate overlap.
 
 ---
 
@@ -297,7 +298,7 @@ Disconnect emails are cooldown-suppressed (~6h) so Gateway flaps do not spam.
 1. **Whole shares** on IBKR — no fractional API orders.  
 2. **Never borrow** — buys sized to `AvailableFunds`, not BuyingPower.  
 3. **All-in / all-out per sleeve** — not partial target weights.  
-4. **No forced Monday rebalance** — picker soft-rotates; sells wait for signals. **Save & rebalance** equalizes active sleeves only — it does not liquidate `exit_only` drops (use Reduce or wait for SELL). Dropped names are **removed from the live book once flat**.  
+4. **Monday hard rotate** — picker flattens the bot book, then buys the new slate (SMA20). **Save & rebalance** equalizes active sleeves between rotates.  
 5. **Picker abort** if &gt;30% IBKR bar fetches fail — previous pending kept.  
 6. **Hybrid B** — sleeve must beat B&amp;H **and** make money; ranked by strategy profit.  
 7. **Live money** only after G3 graduation + explicit `LIVE_TRADING_CONFIRM=YES`.
@@ -320,7 +321,7 @@ sequenceDiagram
   Mon->>Mon: live_worker first RTH cycle
   Mon->>Mon: apply pending → live + V1 + V2
   Mon->>Dash: "New sleeves applied" email
-  Mon->>Mon: soft-rotate flags active
+  Mon->>Mon: hard-rotate flatten then enter
 
   Day->>Day: every ~5m: prices → signals → orders
   Day->>Dash: fills / rejects / health
@@ -338,7 +339,7 @@ sequenceDiagram
 | Order sizing / never-borrow | `app/live/planner.py`, `app/live/risk_limits.py` |
 | Submit vs dry-run | `app/live/executor.py`, `app/broker/gateway.py` |
 | Which stocks? | `app/picker/run.py`, `app/picker/rank.py` |
-| Soft rotate | `app/picker/soft_rotate.py`, `app/picker/apply.py` |
+| Hard rotate | `app/picker/hard_rotate.py`, `app/picker/apply.py` |
 | First-buy SMA | `app/picker/trend_gate.py` |
 | Trading budget + reduce | `app/live/budget.py`, `app/live/control.py` |
 | Equal cash + 1-share stretch | `app/picker/sizing.py` (`resolve_equal_buy_cash_cap`) |

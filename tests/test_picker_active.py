@@ -7,6 +7,7 @@ from app.picker.active import (
     clear_exit_only_if_flat,
     load_active,
     prune_exit_only_if_flat,
+    prune_flat_exit_only,
     reconcile_awaiting_first_buy,
     save_active,
 )
@@ -63,3 +64,37 @@ def test_reconcile_awaiting_clears_when_long() -> None:
     assert reconcile_awaiting_first_buy(active, {"P": 10.0, "HUM": 0.0}) is True
     assert active.get("P").awaiting_first_buy is False  # type: ignore[union-attr]
     assert active.get("HUM").awaiting_first_buy is True  # type: ignore[union-attr]
+
+
+def test_prune_flat_exit_only_treats_missing_as_zero() -> None:
+    """IBKR omits flat positions — orphans must still be removed."""
+    active = ActiveSelection(
+        applied_at="t",
+        run_id="r",
+        symbols=[
+            ActiveSymbol("P", 0.01, 0.05, exit_only=True),
+            ActiveSymbol("HUM", 0.01, 0.05, exit_only=True),
+            ActiveSymbol("AMGN", 0.01, 0.05, exit_only=True),
+            ActiveSymbol("VLO", 0.01, 0.05, exit_only=True),
+            ActiveSymbol("FICO", 0.01, 0.01, exit_only=False),
+        ],
+    )
+    # Broker map has only the still-long exit_only name (and the keeper).
+    removed = prune_flat_exit_only(active, {"VLO": 293.0, "FICO": 127.0})
+    assert set(removed) == {"P", "HUM", "AMGN"}
+    assert {s.symbol for s in active.symbols} == {"VLO", "FICO"}
+    assert active.get("VLO").exit_only is True  # type: ignore[union-attr]
+
+
+def test_prune_flat_exit_only_empty_map_clears_all_exit_only() -> None:
+    active = ActiveSelection(
+        applied_at="t",
+        run_id="r",
+        symbols=[
+            ActiveSymbol("P", 0.01, 0.05, exit_only=True),
+            ActiveSymbol("FICO", 0.01, 0.01),
+        ],
+    )
+    removed = prune_flat_exit_only(active, {})
+    assert removed == ["P"]
+    assert [s.symbol for s in active.symbols] == ["FICO"]

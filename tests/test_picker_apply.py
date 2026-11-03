@@ -51,8 +51,10 @@ def test_apply_pending_happy_path_and_idempotent(tmp_path: Path) -> None:
         picker, live, v1, v2, now=datetime(2026, 10, 13, 14, 0, tzinfo=timezone.utc)
     )
     assert result.applied is True
+    assert result.reason == "applied_hard_rotate"
     active = load_active(picker.active_selection_path)
     assert active is not None
+    assert active.rotation_phase == "flattening"
     symbols = {s.symbol: s for s in active.symbols}
     assert symbols["AAPL"].awaiting_first_buy is True
     assert symbols["MSFT"].exit_only is True
@@ -103,6 +105,8 @@ def test_apply_empty_pending_marks_prior_exit_only(tmp_path: Path) -> None:
     )
     result = apply_pending_selection(picker, live, v1, v2)
     assert result.applied is True
+    assert result.reason == "applied_hard_rotate"
     active = load_active(picker.active_selection_path)
     assert [s.symbol for s in active.symbols] == ["AAPL"]  # type: ignore[union-attr]
     assert active.symbols[0].exit_only is True  # type: ignore[union-attr]
+    assert active.rotation_phase == "flattening"  # type: ignore[union-attr]

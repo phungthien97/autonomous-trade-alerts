@@ -8,6 +8,7 @@ from app.picker.active import (
     clear_exit_only_if_flat,
     load_active,
     prune_exit_only_if_flat,
+    prune_flat_exit_only,
     reconcile_awaiting_first_buy,
     save_active,
 )
@@ -42,6 +43,7 @@ from app.picker.sizing import (
     resolve_equal_buy_cash_cap,
     sleeve_buy_budget,
 )
+from app.picker.hard_rotate import HardRotateFlags, HardRotatePlan, plan_hard_rotate
 from app.picker.soft_rotate import SoftRotateFlags, SoftRotatePlan, plan_soft_rotate
 from app.picker.sp500 import (
     Sp500Constituent,
@@ -94,6 +96,7 @@ __all__ = [
     "clear_awaiting_first_buy",
     "clear_exit_only_if_flat",
     "prune_exit_only_if_flat",
+    "prune_flat_exit_only",
     "reconcile_awaiting_first_buy",
     "evaluate_fetch_failures",
     "fetch_symbol_with_retries",
@@ -111,7 +114,10 @@ __all__ = [
     "normalize_wikipedia_ticker",
     "parse_sp500_constituents",
     "parse_sp500_html",
+    "plan_hard_rotate",
     "plan_soft_rotate",
+    "HardRotateFlags",
+    "HardRotatePlan",
     "profiles_by_symbol",
     "rank_one_symbol",
     "ranking_windows",

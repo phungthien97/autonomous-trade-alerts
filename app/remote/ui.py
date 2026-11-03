@@ -1013,9 +1013,9 @@ def _render_trading_budget_section(
         "**Save & rebalance** equalizes each *active* (non-exit-only) sleeve to "
         "**(budget − exit-only invested) ÷ N** "
         "(sell overweight · buy underweight only above SMA20 · US RTH). "
-        "During soft-rotate, capital still in **exit-only** drops shrinks active targets "
-        "so total invested stays ≤ budget — drops are **not** sold by rebalance "
-        "(wait for a peak/trough SELL, or use **Reduce**). "
+        "During hard-rotate flatten, buys are blocked until the book is flat; "
+        "any leftover exit-only mark still shrinks deployable targets. "
+        "Picker Mondays **force-sell the whole bot book** before buying the new slate. "
         "To change the wallet **without** trading, use **Save wallet only**. "
         "Cash-out (sells only, no equal buys) → **Reduce** below."
     )

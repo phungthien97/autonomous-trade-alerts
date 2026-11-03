@@ -1,4 +1,4 @@
-"""Monday apply orchestrator: pending → live + V1 + V2 + active."""
+"""Monday apply orchestrator: pending → live + V1 + V2 + active (hard rotate)."""
 
 from __future__ import annotations
 
@@ -7,11 +7,17 @@ from datetime import datetime, timedelta, timezone
 
 from app.live.config import load_live_config
 from app.paths import LivePaths, PickerPaths, StatePaths
-from app.picker.active import ActiveSelection, ActiveSymbol, load_active, save_active
+from app.picker.active import (
+    ROTATION_FLATTENING,
+    ActiveSelection,
+    ActiveSymbol,
+    load_active,
+    save_active,
+)
 from app.picker.apply_live import apply_allocated_cash_to_live_state, apply_to_live_config
 from app.picker.apply_paper import apply_to_paper_v1, apply_to_paper_v2
+from app.picker.hard_rotate import plan_hard_rotate
 from app.picker.pending import load_pending, mark_applied
-from app.picker.soft_rotate import plan_soft_rotate
 
 
 @dataclass(frozen=True)
@@ -72,10 +78,10 @@ def apply_pending_selection(
     v2_paths: StatePaths,
     now: datetime | None = None,
 ) -> ApplyResult:
-    """Apply pending selection to all targets; idempotent on status.
+    """Apply pending selection via hard rotate; idempotent on status.
 
-    Writes live/V1/V2 first, then active store, then marks pending applied.
-    If a write raises, pending stays ``pending`` for retry.
+    Writes live/V1/V2 first, then active store (``rotation_phase=flattening``),
+    then marks pending applied. Worker force-sells the bot book before any new buys.
     """
     pending = load_pending(picker_paths.pending_selection_path)
     if pending is None:
@@ -91,17 +97,8 @@ def apply_pending_selection(
     active_symbols = [s.symbol for s in prior.symbols] if prior else []
     pending_symbols = [s.symbol for s in pending.symbols]
     prior_params = {s.symbol: s for s in (prior.symbols if prior else [])}
-    prior_awaiting = {
-        s.symbol: bool(s.awaiting_first_buy) for s in (prior.symbols if prior else [])
-    }
-    plan = plan_soft_rotate(
-        active_symbols,
-        pending_symbols,
-        prior_awaiting=prior_awaiting,
-    )
-    awaiting_symbols = [
-        sym for sym in pending_symbols if plan.flags[sym].awaiting_first_buy
-    ]
+    plan = plan_hard_rotate(active_symbols, pending_symbols)
+    awaiting_symbols = list(plan.target)
     applied_at = (now or datetime.now(timezone.utc)).isoformat()
 
     apply_to_live_config(
@@ -144,9 +141,6 @@ def apply_pending_selection(
     for symbol in pending_symbols:
         src = pending_by_symbol[symbol]
         flags = plan.flags[symbol]
-        joined = applied_at if symbol in plan.added else (
-            prior_params[symbol].joined_at if symbol in prior_params else applied_at
-        )
         active_rows.append(
             ActiveSymbol(
                 symbol=symbol,
@@ -154,7 +148,7 @@ def apply_pending_selection(
                 sell_drop=src.sell_drop,
                 exit_only=flags.exit_only,
                 awaiting_first_buy=flags.awaiting_first_buy,
-                joined_at=joined,
+                joined_at=applied_at,
             )
         )
     for symbol in plan.dropped:
@@ -173,7 +167,12 @@ def apply_pending_selection(
 
     save_active(
         picker_paths.active_selection_path,
-        ActiveSelection(applied_at=applied_at, run_id=pending.run_id, symbols=active_rows),
+        ActiveSelection(
+            applied_at=applied_at,
+            run_id=pending.run_id,
+            symbols=active_rows,
+            rotation_phase=ROTATION_FLATTENING,
+        ),
     )
     mark_applied(picker_paths.pending_selection_path)
-    return ApplyResult(applied=True, reason="applied", run_id=pending.run_id)
+    return ApplyResult(applied=True, reason="applied_hard_rotate", run_id=pending.run_id)

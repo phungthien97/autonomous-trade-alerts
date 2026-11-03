@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 @dataclass
@@ -18,16 +18,23 @@ class ActiveSymbol:
     joined_at: str | None = None
 
 
+# idle = normal trading; flattening = hard-rotate sell-all before new buys.
+ROTATION_IDLE = "idle"
+ROTATION_FLATTENING = "flattening"
+
+
 @dataclass
 class ActiveSelection:
     applied_at: str
     run_id: str
     symbols: list[ActiveSymbol] = field(default_factory=list)
+    rotation_phase: str = ROTATION_IDLE
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "applied_at": self.applied_at,
             "run_id": self.run_id,
+            "rotation_phase": self.rotation_phase,
             "symbols": [asdict(s) for s in self.symbols],
         }
 
@@ -44,11 +51,19 @@ class ActiveSelection:
             )
             for row in raw.get("symbols", [])
         ]
+        phase = str(raw.get("rotation_phase") or ROTATION_IDLE).strip().lower()
+        if phase not in {ROTATION_IDLE, ROTATION_FLATTENING}:
+            phase = ROTATION_IDLE
         return cls(
             applied_at=str(raw.get("applied_at", "")),
             run_id=str(raw.get("run_id", "")),
             symbols=symbols,
+            rotation_phase=phase,
         )
+
+    @property
+    def is_flattening(self) -> bool:
+        return self.rotation_phase == ROTATION_FLATTENING
 
     def get(self, symbol: str) -> ActiveSymbol | None:
         for row in self.symbols:
@@ -90,6 +105,31 @@ def prune_exit_only_if_flat(active: ActiveSelection, symbol: str, shares: float)
         return False
     active.symbols = [s for s in active.symbols if s.symbol != symbol]
     return True
+
+
+def prune_flat_exit_only(
+    active: ActiveSelection,
+    shares_by_symbol: Mapping[str, float] | None = None,
+) -> list[str]:
+    """Remove every exit-only name that is flat.
+
+    Missing symbols in ``shares_by_symbol`` count as **0** (IBKR omits flats).
+    Without this, already-flat drops (or sells that left the position map)
+    linger forever in active/config and keep showing trough "Waiting…" noise.
+    Returns the symbols removed (uppercased as stored).
+    """
+    positions = {
+        str(k).upper(): float(v or 0.0)
+        for k, v in (shares_by_symbol or {}).items()
+    }
+    removed: list[str] = []
+    for row in list(active.symbols):
+        if not row.exit_only:
+            continue
+        sh = float(positions.get(str(row.symbol).upper(), 0.0) or 0.0)
+        if prune_exit_only_if_flat(active, row.symbol, sh):
+            removed.append(row.symbol)
+    return removed
 
 
 def clear_exit_only_if_flat(active: ActiveSelection, symbol: str, shares: float) -> bool:

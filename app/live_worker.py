@@ -31,9 +31,11 @@ from app.live.reconcile import LocalSleeveState, reconcile
 from app.live.session import is_us_equity_rth
 from app.paths import LivePaths, PickerPaths, StatePaths
 from app.picker.active import (
+    ROTATION_IDLE,
     clear_awaiting_first_buy,
     load_active,
     prune_exit_only_if_flat,
+    prune_flat_exit_only,
     reconcile_awaiting_first_buy,
     save_active,
 )
@@ -219,14 +221,16 @@ def run_live_once(
             "picker_applied",
             "\n".join(
                 [
-                    "New picker sleeves are now live",
+                    "New picker sleeves — hard rotate started",
                     "",
                     "What this means",
                     "  Weekend ranking was applied to live + paper books.",
-                    "  Soft-rotate rules are in effect (exit-only drops, awaiting first buy).",
+                    "  Bot will SELL the entire current book first.",
+                    "  After flat, it buys the new slate (SMA20 first-buy gate).",
                     "",
                     "Details",
                     f"  Run id: {apply_result.run_id}",
+                    f"  Apply reason: {apply_result.reason}",
                 ]
             ),
             config.alerts,
@@ -253,6 +257,7 @@ def run_live_once(
 
     active = load_active(picker_paths.active_selection_path)
     active_flags = {row.symbol: row for row in (active.symbols if active else [])}
+    flattening = bool(active is not None and active.is_flattening)
     closes_by_symbol = closes_by_symbol or {}
 
     raw = _load_state(paths.state_path)
@@ -281,19 +286,65 @@ def run_live_once(
     active_dirty = False
 
     # Stale awaiting_first_buy: already long at broker → treat as entered.
+    # Skip during hard-rotate flatten — kept names are still long until sold.
     broker_pos = broker.get_positions()
     share_map = {
         str(k).upper(): float(v)
         for k, v in {**report.corrected.shares, **broker_pos}.items()
     }
-    if active is not None and reconcile_awaiting_first_buy(active, share_map):
+    if (
+        active is not None
+        and not flattening
+        and reconcile_awaiting_first_buy(active, share_map)
+    ):
         active_dirty = True
         active_flags = {row.symbol: row for row in active.symbols}
+
+    # Flat exit-only orphans: IBKR omits zero positions, so per-symbol prune
+    # never sees them. Sweep all exit_only names; missing shares ⇒ 0.
+    if active is not None:
+        for sym in prune_flat_exit_only(active, share_map):
+            active_dirty = True
+            updated = remove_symbol_from_live_config(paths.config_path, sym)
+            if updated is not None:
+                config = updated
+            assets.pop(sym, None)
+            assets.pop(str(sym).upper(), None)
+            print(f"pruned flat exit_only symbol={sym}")
+        if active_dirty:
+            active_flags = {row.symbol: row for row in active.symbols}
+            # Keep config.symbols / sleeve loop in sync after removals.
+            config = load_live_config(paths.config_path) if paths.config_path.exists() else config
+
+    # If hard-rotate apply found an already-flat book, leave flattening now so
+    # this same cycle can SMA-gate first buys (don't burn a cycle waiting).
+    if active is not None and flattening:
+        still_long = any(
+            float(share_map.get(str(sym).upper(), 0.0) or 0.0) > 1e-9
+            for sym in config.symbols
+        )
+        if not still_long:
+            active.rotation_phase = ROTATION_IDLE
+            flattening = False
+            active_dirty = True
+            for sym in prune_flat_exit_only(active, share_map):
+                updated = remove_symbol_from_live_config(paths.config_path, sym)
+                if updated is not None:
+                    config = updated
+                assets.pop(sym, None)
+                assets.pop(str(sym).upper(), None)
+                print(f"pruned flat exit_only symbol={sym}")
+            active_flags = {row.symbol: row for row in active.symbols}
+            if paths.config_path.exists():
+                config = load_live_config(paths.config_path)
+            print("hard_rotate: already flat at apply — entering new slate this cycle")
 
     # Flush parked outside-RTH intents once the session is open.
     if rth_ok:
 
         def _queue_gate(row: PendingIntent) -> str | None:
+            if flattening and row.side == "BUY":
+                return "hard_rotate_flattening"
             flags = active_flags.get(row.symbol) or active_flags.get(str(row.symbol).upper())
             if row.side == "BUY" and flags is not None and flags.exit_only:
                 return "exit_only"
@@ -420,7 +471,17 @@ def run_live_once(
         probe = StrategyState(cash=before.cash, shares=before.shares, peak=before.peak, trough=before.trough)
         trough_before = None if before.trough is None else float(before.trough)
         peak_before = None if before.peak is None else float(before.peak)
-        if exit_pending and broker_shares > 1e-9:
+        if flattening and broker_shares > 1e-9:
+            signal, signal_reason = "SELL", "Hard rotate — flattening book before new sleeves"
+            probe = StrategyState(
+                cash=before.cash,
+                shares=broker_shares,
+                peak=before.peak,
+                trough=before.trough,
+            )
+        elif flattening:
+            signal, signal_reason = None, "Hard rotate — waiting for book to go flat"
+        elif exit_pending and broker_shares > 1e-9:
             signal, signal_reason = "SELL", "Exit pending — selling remaining broker shares"
             probe = StrategyState(cash=before.cash, shares=broker_shares, peak=before.peak, trough=before.trough)
         else:
@@ -444,6 +505,10 @@ def run_live_once(
             )
         flags = active_flags.get(symbol)
         gate_reason = None
+        if signal == "BUY" and flattening:
+            signal = None
+            gate_reason = "hard_rotate_flattening"
+            signal_reason = "Hard rotate — buys blocked until book is flat"
         if signal == "BUY" and exit_pending:
             signal = None
             gate_reason = "exit_pending"
@@ -585,6 +650,8 @@ def run_live_once(
                 plan_why = "waiting on 20-hour average"
             elif gate_reason == "exit_only":
                 plan_why = "sells only"
+            elif gate_reason == "hard_rotate_flattening":
+                plan_why = "hard rotate flatten"
             else:
                 plan_why = gate_reason
         if signal == "BUY" and plan_why == "zero quantity":
@@ -831,6 +898,60 @@ def run_live_once(
             assets.pop(symbol, None)
             active_flags = {row.symbol: row for row in active.symbols}
 
+    # Second sweep: flats omitted from broker/reconcile maps (same as start-of-cycle).
+    end_pos = broker.get_positions()
+    end_share_map = {
+        str(k).upper(): float(v)
+        for k, v in {**end_report.corrected.shares, **end_pos}.items()
+    }
+    if active is not None:
+        for sym in prune_flat_exit_only(active, end_share_map):
+            active_dirty = True
+            updated = remove_symbol_from_live_config(paths.config_path, sym)
+            if updated is not None:
+                config = updated
+            assets.pop(sym, None)
+            assets.pop(str(sym).upper(), None)
+            print(f"pruned flat exit_only symbol={sym}")
+        if active_dirty:
+            active_flags = {row.symbol: row for row in active.symbols}
+
+    # Hard rotate: once every bot-book symbol is flat, leave flattening and allow buys.
+    if active is not None and active.is_flattening:
+        still_long = False
+        for sym in list(config.symbols):
+            sh = float(end_share_map.get(str(sym).upper(), 0.0) or 0.0)
+            if sh > 1e-9:
+                still_long = True
+                break
+        if not still_long:
+            active.rotation_phase = ROTATION_IDLE
+            active_dirty = True
+            for sym in prune_flat_exit_only(active, end_share_map):
+                updated = remove_symbol_from_live_config(paths.config_path, sym)
+                if updated is not None:
+                    config = updated
+                assets.pop(sym, None)
+                assets.pop(str(sym).upper(), None)
+                print(f"pruned flat exit_only symbol={sym}")
+            active_flags = {row.symbol: row for row in active.symbols}
+            print("hard_rotate: book flat — entering new slate (SMA20 first buys)")
+            _safe_notify(
+                "picker_applied",
+                "\n".join(
+                    [
+                        "Hard rotate flatten complete",
+                        "",
+                        "What this means",
+                        "  Prior book is flat. New sleeves may buy when above SMA20.",
+                        "",
+                        "Details",
+                        f"  Targets: {', '.join(s.symbol for s in active.symbols if not s.exit_only) or '—'}",
+                    ]
+                ),
+                config.alerts,
+            )
+
     # Raw AF kept for logging. Buy path uses trading_budget + spendable_usd.
     raw_af = getattr(end_snapshot, "available_funds_usd", None)
     spendable_native = max(
@@ -838,7 +959,6 @@ def run_live_once(
         float(getattr(end_snapshot, "spendable_native", None) or end_snapshot.spendable_usd),
     )
     spendable_usd = max(0.0, float(end_snapshot.spendable_usd))
-    end_pos = broker.get_positions()
     end_marks = dict(price_by_symbol)
     for sym, row in assets.items():
         lp = row.get("last_price")

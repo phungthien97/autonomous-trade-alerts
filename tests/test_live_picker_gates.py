@@ -28,7 +28,11 @@ def _setup(tmp_path, monkeypatch):
     return paths
 
 
-def test_exit_only_blocks_buy(tmp_path, monkeypatch) -> None:
+def test_flat_exit_only_is_pruned(tmp_path, monkeypatch) -> None:
+    """Already-flat drops must leave the book (IBKR omits zero positions)."""
+    from app.live.config import load_live_config
+    from app.picker.active import load_active
+
     paths = _setup(tmp_path, monkeypatch)
     picker = PickerPaths(project_root=tmp_path)
     save_active(
@@ -43,11 +47,66 @@ def test_exit_only_blocks_buy(tmp_path, monkeypatch) -> None:
     risk = RiskController(paths.risk_path)
     audit = AuditLog(paths.audit_log_path)
     t1 = datetime(2026, 9, 23, 14, 0, tzinfo=timezone.utc)
-    t2 = datetime(2026, 9, 23, 15, 0, tzinfo=timezone.utc)
-    run_live_once(paths, broker, risk, audit, t1, {"AAA": 100.0}, {"AAA": "b1"})
-    out = run_live_once(paths, broker, risk, audit, t2, {"AAA": 102.0}, {"AAA": "b2"})
+    out = run_live_once(paths, broker, risk, audit, t1, {"AAA": 100.0}, {"AAA": "b1"})
     assert broker.get_positions().get("AAA", 0) == 0
-    assert out["decisions"][0]["gate"] == "exit_only"
+    assert all(d.get("symbol") != "AAA" for d in out["decisions"])
+    active = load_active(picker.active_selection_path)
+    assert active is not None
+    assert active.get("AAA") is None
+    cfg = load_live_config(paths.config_path)
+    assert "AAA" not in [str(s).upper() for s in cfg.symbols]
+
+
+def test_exit_only_long_can_sell_then_prunes(tmp_path, monkeypatch) -> None:
+    """Still-long exit_only may SELL; once flat it is removed from the book."""
+    from app.live.config import load_live_config
+    from app.picker.active import load_active
+
+    paths = _setup(tmp_path, monkeypatch)
+    picker = PickerPaths(project_root=tmp_path)
+    save_active(
+        picker.active_selection_path,
+        ActiveSelection(
+            applied_at="t",
+            run_id="r",
+            symbols=[ActiveSymbol("AAA", 0.01, 0.5, exit_only=True)],
+        ),
+    )
+    broker = InMemoryBroker(1000.0, last_prices={"AAA": 100.0})
+    broker.positions["AAA"] = 10.0
+    # Persist peak so a drop can sell.
+    paths.state_path.write_text(
+        json.dumps(
+            {
+                "cash_usd": 0.0,
+                "assets": {
+                    "AAA": {
+                        "cash": 0.0,
+                        "shares": 10.0,
+                        "peak": 100.0,
+                        "trough": 90.0,
+                        "last_price": 100.0,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    risk = RiskController(paths.risk_path)
+    audit = AuditLog(paths.audit_log_path)
+    t1 = datetime(2026, 9, 23, 14, 0, tzinfo=timezone.utc)
+    # 50% sell_drop from peak 100 → sell at/under 50; use 49 to force SELL.
+    out = run_live_once(paths, broker, risk, audit, t1, {"AAA": 49.0}, {"AAA": "b1"})
+    assert out["decisions"][0]["symbol"] == "AAA"
+    assert out["decisions"][0]["signal"] == "SELL"
+    assert out["decisions"][0]["action"] in {"submitted", "filled", "partial"}
+    # Memory broker fills immediately → flat → pruned this cycle.
+    active = load_active(picker.active_selection_path)
+    assert active is not None
+    assert active.get("AAA") is None
+    cfg = load_live_config(paths.config_path)
+    assert "AAA" not in [str(s).upper() for s in cfg.symbols]
+    assert float(broker.get_positions().get("AAA", 0) or 0) == 0.0
 
 
 def test_sma_gate_blocks_awaiting_first_buy(tmp_path, monkeypatch) -> None:
