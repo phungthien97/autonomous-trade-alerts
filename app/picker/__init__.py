@@ -1,4 +1,4 @@
-"""S&P 500 auto stock-picker (biweekly rank + soft rotate)."""
+"""S&P 500 auto stock-picker (biweekly rank + hard rotate)."""
 
 from app.paths import PickerPaths
 from app.picker.active import (

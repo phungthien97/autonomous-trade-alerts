@@ -114,8 +114,9 @@ flowchart TD
 
 | Gate | When | Effect |
 |------|------|--------|
-| **exit_only** | Symbol dropped by picker soft-rotate | Blocks new BUY; SELL still allowed |
-| **SMA20 first buy** | Symbol newly added (`awaiting_first_buy`) | BUY only if last price **>** 20-hour SMA; fail closed if not enough bars |
+| **hard_rotate_flattening** | After Monday apply, until bot book is flat | Force-SELL all longs; block all BUYs |
+| **exit_only** | Name left over from flatten (dropped) | Blocks new BUY until pruned flat |
+| **SMA20 first buy** | After flatten, new slate (`awaiting_first_buy`) | BUY only if last price **>** 20-hour SMA; fail closed if not enough bars |
 | **Never-borrow** | Planning a BUY | Qty reduced / rejected if notional + fees > `AvailableFunds` (BuyingPower ignored) |
 | **Whole shares** | IBKR US stocks | `allow_fractional_default=false`; qty floored to integers |
 | **Idempotency** | Same symbol + bar timestamp + side | At most one live attempt |
@@ -139,7 +140,7 @@ Guard: `app/broker/gateway.py` (`BrokerGateway`).
 **Long-term contract (live, `use_account_cash`):**
 
 - **Trading budget (USD wallet)** on the dashboard caps how much of the IBKR account the bot may deploy. Deposits do **not** auto-enlarge the book; raise the budget manually.
-- **Save budget** (type `REBALANCE`): equalizes each active non-`exit_only` sleeve to `(budget_usd − exit_only invested) / N` (SELL overweight, BUY underweight). Soft-rotate drops still long shrink active targets so total invested stays ≤ wallet. Buys respect **SMA20**; US RTH only; briefly stops `live-worker` during orders; never borrow. Universe = active/config only (no orphan broker longs). Cash-out without equalizing: **Reduce** (pro-rata sells of **bot book only**, RTH + trading-enabled + worker pause) → withdraw in IBKR.
+- **Save budget** (type `REBALANCE`): equalizes each active non-`exit_only` sleeve to `budget / N` after hard-rotate flatten (during flatten, buys are blocked anyway). Buys respect **SMA20**; US RTH only; briefly stops `live-worker` during orders; never borrow. Universe = active/config only. Cash-out without equalizing: **Reduce** (bot book only).
 - Buy pool (signal-driven entries between rebalances) = unused wallet minus USD **reserved** to top underweight longs up to deployable/`N`, then split among flats (also capped at deployable/`N`). Missing FX → spendable 0 → block buys.
 - **Equal among remaining flats** on that pool (+ **1-share stretch** if equal slot &lt; price but pool can afford 1 share).
 - After a BUY is live, `n_long` reserves the sleeve so same-cycle peers stay even on the refreshed pool.
@@ -228,7 +229,7 @@ Both use the same peak/trough `step_signal`. Differences:
 |--|-------------------|----------------------|
 | Optimizer | Unconstrained grid on trailing window | Constrained grid + trip penalty (`meta_optimizer` / `optimize_params_v2`) |
 | Broker | None — file cash/shares only | Same |
-| Picker | Soft-rotate flags honored in `worker.py` | Same |
+| Picker | Hard-rotate flatten then SMA first buys in `live_worker` | Same |
 | Purpose | Baseline paper experiment | Constrained / fee-aware paper experiment |
 
 Live is **not** a copy of V2: it adds IBKR, fees at order time, never-borrow, RTH, idempotency, and picker gates.
@@ -274,7 +275,7 @@ flowchart LR
 | `state_live/state.json` | Per-symbol cash/shares/peak/trough; orders_today; reject_streak |
 | `state_live/risk.json` | `trading_enabled` + open incident |
 | `state_picker/pending_selection.json` | Weekend slate waiting for Monday |
-| `state_picker/active_selection.json` | Soft-rotate flags after apply |
+| `state_picker/active_selection.json` | Hard-rotate phase + sleeve flags after apply |
 
 ---
 

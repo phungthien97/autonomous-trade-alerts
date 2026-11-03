@@ -431,7 +431,7 @@ Goal is **beat equal-weight B&H after fees** (Q0.1), not max absolute return. Ra
 
 - Equal-weight B&H for live = equal weight of **MSFT + AAPL + SMH** only.
 - Paper historical CSV may still show `ZSP.TO` pre-cutover; VOO sleeve was reset fresh.
-- **Supersession (2026-10):** Static live trio is the MVP bootstrap. Ongoing universe selection is the **S&P 500 auto stock-picker** (Section 12): biweekly rank → soft rotate → feeds paper V1, paper V2, and live. B&H benchmark then = equal-weight of the **picker active list** (0–5 names), not the fixed trio.
+- **Supersession (2026-10 / rotate 2026-11-02):** Static live trio is the MVP bootstrap. Ongoing universe selection is the **S&P 500 auto stock-picker** (Section 12): biweekly rank → **hard rotate** (flatten then enter) → feeds paper V1, paper V2, and live. B&H benchmark then = equal-weight of the **picker active list** (0–5 names), not the fixed trio.
 **Defer?** no (trio locked for MVP; picker is the next universe layer)
 
 ---
@@ -855,11 +855,11 @@ Record each session so we don’t re-litigate.
 | Picker list size      | Up to **5**; fewer OK; **0 → all cash** if none clear quality bar                                               | 2026-10-17 | high       |
 | Picker cadence        | **Every 2 weeks**; rank Sat 00:00 Eastern; email summary; apply first live-worker cycle after Monday open      | 2026-10-17 | high       |
 | Picker autonomy       | **Fully auto** — no human veto; first run applies Monday normally                                              | 2026-10-17 | high       |
-| Picker rotate         | **Soft rotate**: drop → sell on next sell signal; add → first BUY only if price > **20h SMA**                  | 2026-10-17 | high       |
+| Picker rotate         | **Hard rotate** (2026-11-02): flatten entire bot book, then buy new slate (SMA20 first buy). Replaces soft rotate. | 2026-11-02 | high       |
 | Picker score          | After-fee edge vs per-symbol B&H; optimize buy/sell on prior **1 week**; score on latest **1 month**; hourly IBKR bars; **$1000/symbol** scoring capital | 2026-10-17 | high       |
 | Picker quality bar    | Keep **edge ≥ 0** and **strategy_return ≥ 0**; top ≤5 by **strategy_return** (Hybrid B); score all S&P 500   | 2026-10-18 | high       |
 | Picker params write   | Monday apply writes tickers **and** optimize-week buy/sell % into V1/V2/live; mid-cycle re-opt **may overwrite** % | 2026-10-17 | high       |
-| Picker capital        | **Equal weight** across active list; resize **only as cash frees** (no forced Monday rebalance)                | 2026-10-17 | high       |
+| Picker capital        | After hard-rotate flatten: equal sleeves on full wallet; between rotates resize as cash frees / Save & rebalance | 2026-11-02 | high       |
 | Picker data failures  | Per-ticker: retry then skip; if **>30%** S&P fails IBKR fetch → error email + **keep previous list**           | 2026-10-17 | high       |
 | Picker email          | Ranking summary **every** biweekly run (even if list unchanged)                                                  | 2026-10-17 | high       |
 | Remote portfolio UI   | Streamlit on **OVH** via **Tailscale**; evolve `app/dashboard.py`; tabs Live/Paper/Picker; safe controls only; manual refresh; IBKR API marks via separate client id | 2026-10-17 | high       |
@@ -880,16 +880,18 @@ Record each session so we don’t re-litigate.
 
 ## 12. S&P 500 auto stock-picker — developer specification
 
-Developer-ready spec from the 2026-10 iterative Q&A. Implements approaches **(1) biweekly S&P rank by after-fee edge vs B&H** + **(2) soft rotate** into existing paper/live bots. Goal: **maximize after-fee edge vs equal-weight B&H** of the active list; fully automatic.
+Developer-ready spec from the 2026-10 iterative Q&A. Implements approaches **(1) biweekly S&P rank by after-fee edge vs B&H** + **(2) rotate** into existing paper/live bots. Goal: **maximize after-fee edge vs equal-weight B&H** of the active list; fully automatic.
 
-**Status:** Spec locked — ready to implement. Does **not** replace Q0–Q7 live controls (RTH, whole shares, never-borrow, alert→2h→stop, broker truth); it replaces **static symbol lists** and adds a weekend ranking job.
+**Supersession (2026-11-02):** Rotate mode is now **hard rotate** (force-sell whole bot book on Monday apply → then SMA20 first buys into the new slate). Soft-rotate prose in §12.6 and older tables is historical; code truth is `app/picker/hard_rotate.py` + `active.rotation_phase` + `docs/bot_architecture.md`.
+
+**Status:** Implemented. Does **not** replace Q0–Q7 live controls (RTH, whole shares, never-borrow, alert→2h→stop, broker truth); it replaces **static symbol lists** and adds a weekend ranking job.
 
 ### 12.1 Goals and non-goals
 
 | In scope | Out of scope (v1 picker) |
 |----------|---------------------------|
 | Biweekly rank of all S&P 500 names on OVH | Human veto / approve-before-apply UI |
-| Soft rotate into V1, V2, and live configs | Hard flatten / forced Monday rebalance |
+| Hard rotate into V1, V2, and live configs (flatten then enter) | Soft overlap / trail-only exits on drops |
 | Write tickers + initial buy/sell % | Edge-weighted sleeves |
 | Wikipedia S&P membership cache | Non-S&P names, options, shorts, TSX |
 | IBKR hourly bars for ranking | Yahoo as primary ranking data |
@@ -915,8 +917,8 @@ Developer-ready spec from the 2026-10 iterative Q&A. Implements approaches **(1)
     - ticker membership in the active universe, and
     - initial `buy_rise` / `sell_drop` (or config equivalents) from the **optimize week**.
 12. **Mid-cycle thresholds:** Existing V1/V2 (and live, if applicable) **re-optimize on their normal schedules may overwrite** picker-written buy/sell %. Picker does not freeze thresholds for the full biweek.
-13. **Soft rotate — drop:** Symbols leaving the list stay tradable for **exits only**: allow **SELL on next sell signal**; do **not** open new BUYs after drop. Remove from active list once flat (or immediately if already cash).
-14. **Soft rotate — add:** New symbols may **BUY on the next buy signal** only if **price > 20-period SMA of hourly closes** at signal time. Gate applies to the **first fill** after join; after that, normal strategy logic (no ongoing MA gate unless later extended).
+13. **Hard rotate — flatten:** On Monday apply, set `rotation_phase=flattening`. Worker **force-SELLS the entire bot book** (including kept names). BUYs blocked until flat. Dropped names are `exit_only` until pruned flat.
+14. **Hard rotate — enter:** When flat, `rotation_phase=idle`. Every target has `awaiting_first_buy`; first BUY only if **price > 20-period SMA of hourly closes**. After first fill, normal peak/trough logic.
 15. **Capital (live):** Target **equal weight** across the **current active list** (1–5). Do **not** force rebalance at Monday apply. New entries size using **available spendable cash / remaining empty sleeves** (equal share of free cash among symbols that still need an entry). Dropped names free cash on sell → available to new/remaining names later.
 16. **Paper V1/V2:** Same symbol list + initial thresholds on apply. Paper sizing stays file-based truth (existing worker behavior); equal-weight soft capital rules are mandatory for **live**.
 
@@ -964,7 +966,7 @@ Developer-ready spec from the 2026-10 iterative Q&A. Implements approaches **(1)
 | `app/picker/bars.py` | IBKR hourly fetch for opt/score windows; retry/skip policy |
 | `app/picker/rank.py` | Optimize 1w, score 1m after-fee edge vs B&H, select top ≤5 |
 | `app/picker/pending.py` | Read/write pending selection + apply marker |
-| `app/picker/apply.py` | Monday apply into V1/V2/live configs + soft-rotate flags |
+| `app/picker/apply.py` | Monday apply into V1/V2/live configs + hard-rotate flatten phase |
 | `app/picker/notify.py` | Build ranking / failure email bodies (reuse `notifier`) |
 | `deploy/ibgateway/picker-rank.timer` + `.service` | Biweekly Saturday schedule on OVH |
 | Existing `app/fees/model.py` | Fee estimates in ranking sim |
@@ -996,11 +998,11 @@ Developer-ready spec from the 2026-10 iterative Q&A. Implements approaches **(1)
 | `sp500_cache.json` | Last-good constituents |
 | `ranking_runs/YYYYMMDD_HHMMSS.json` | Full edge table, windows, fee assumptions, selected set, skip list |
 | `pending_selection.json` | Symbols + buy/sell %, computed_at, apply_after (Monday RTH), run_id |
-| `active_selection.json` | Last **applied** selection + soft-rotate metadata (joined_at, exit_only, awaiting_first_buy) |
+| `active_selection.json` | Last **applied** selection + rotate metadata (`rotation_phase`, joined_at, exit_only, awaiting_first_buy) |
 
 Do not commit live ranking outputs to git (same policy as live audit logs).
 
-### 12.6 Soft rotate and capital — detailed behavior
+### 12.6 Rotate and capital — detailed behavior (historical soft-rotate; see supersession above)
 
 **State flags per symbol (conceptual):**
 
@@ -1092,8 +1094,8 @@ Implement behind pure functions where possible; use fixtures for bars and Wikipe
 1. Pure rank + select + tests (fixture bars; no IBKR).
 2. Wikipedia cache + tests.
 3. IBKR bar adapter + skip/30% policy + tests.
-4. Pending/apply writers for V1/V2/live state + soft-rotate flags.
-5. Wire MA gate + exit_only into `live_worker` (and paper workers if they should honor soft rotate the same way — **yes for consistency**).
+4. Pending/apply writers for V1/V2/live state + hard-rotate flatten phase.
+5. Wire MA gate + hard-rotate flatten into `live_worker` (and paper workers the same way — **yes for consistency**).
 6. Email templates + systemd timer on OVH.
 7. Dry-run weekend → review artifact → enable apply.
 
@@ -1104,7 +1106,7 @@ Implement behind pure functions where possible; use fixtures for bars and Wikipe
 | Universe | S&P 500 only |
 | Targets | V1 + V2 + live |
 | Size | Max 5, flexible, min 0 (cash) |
-| Cadence | Biweekly; soft rotate |
+| Cadence | Biweekly; hard rotate (flatten then enter) |
 | Timing | Sat 00:00 ET rank; apply first live-worker cycle after Monday open |
 | Autonomy | Fully auto; first run applies |
 | Score | After-fee edge vs per-symbol B&H |

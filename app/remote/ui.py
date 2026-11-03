@@ -1063,7 +1063,7 @@ def _render_trading_budget_section(
     wdraw = money.get("withdrawable_usd")
     symbols_live = _rebalance_symbols(money, status, live_paths)
     n_sleeves = len(symbols_live)
-    # Exit-only longs still count against the wallet during soft-rotate.
+    # Exit-only longs (rare during hard-rotate flatten) still haircut deployable.
     exit_only_inv = 0.0
     picker_paths = PickerPaths(project_root=live_paths.project_root)
     active_sel = load_active(picker_paths.active_selection_path)
@@ -1139,7 +1139,7 @@ def _render_trading_budget_section(
         _show(target_sleeve) if target_sleeve is not None else "—",
         help=(
             f"Equal target = (budget − exit-only) ÷ {n_sleeves or 'N'} active sleeves "
-            f"(exit-only invested {_show(exit_only_inv)} during soft-rotate)."
+            f"(exit-only invested {_show(exit_only_inv)} if any remain)."
         ),
     )
     m3.metric(

@@ -595,7 +595,7 @@ def run_live_once(
                     allow_fractional=allow_frac,
                 )
                 # Never size a flat signal buy above equal sleeve target
-                # (deployable = budget − exit_only invested during soft-rotate).
+                # (deployable = budget − exit_only invested if any leftovers remain).
                 if config.trading_budget_usd is not None and n_active > 0:
                     buy_cap = min(
                         float(buy_cap),

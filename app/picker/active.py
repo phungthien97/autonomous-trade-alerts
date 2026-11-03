@@ -1,4 +1,4 @@
-"""Active selection store with soft-rotate metadata."""
+"""Active selection store with hard-rotate phase + sleeve flags."""
 
 from __future__ import annotations
 

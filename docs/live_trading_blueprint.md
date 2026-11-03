@@ -614,8 +614,8 @@ A **biweekly, fully automatic** universe selector that:
 - Optimizes buy/sell % on the **prior 1 week**, scores **after-fee edge vs per-symbol B&H** on the **latest 1 month** ($1000/symbol scoring capital).
 - Keeps names with **edge ≥ 0**, takes **top ≤ 5** (or **0 → all cash**).
 - Emails a summary **every** run; writes **pending**; **applies** on the first `live_worker` cycle after **Monday RTH open** into **V1 + V2 + live**.
-- **Soft rotate:** drops → sell on next sell (exit-only); adds → first BUY only if **price > 20h SMA**.
-- Live capital: **equal weight as cash frees** (no forced Monday rebalance).
+- **Hard rotate (current):** flatten entire bot book on apply, then first BUY only if **price > 20h SMA**. (Soft rotate in older P12 prompts is superseded — see `hard_rotate.py` / `bot_architecture.md`.)
+- Live capital: after flatten, equal sleeves on full wallet; between rotates, equal as cash frees / Save & rebalance.
 - Mid-biweek V1/V2 re-opt **may overwrite** picker thresholds.
 - Data: Wikipedia → cache + last-good; per-ticker retry→skip; **>30%** IBKR fail → error email + **keep previous list**.
 
@@ -634,8 +634,7 @@ OVH
 │           → state_picker/pending_selection.json
 │           → email summary / failure
 ├── python -m app.live_worker
-│     └── first Monday RTH cycle: apply_pending → state_live + state/ + state_v2/
-│           soft-rotate flags; MA gate; equal free-cash BUY sizing
+│     └── first Monday RTH cycle: apply_pending → hard-rotate flatten → SMA first buys
 ├── python -m app.worker --version v1|v2   # honors applied symbols + exit_only
 └── state_picker/  (host artifacts; not git)
 ```
@@ -650,7 +649,7 @@ OVH
 |-------|--------|
 | A | Pure rank math (windows, fee sim, optimize/score, select, fail%) |
 | B | Universe + bars (S&P cache, bar provider, retry/skip) |
-| C | Pending / active / soft-rotate plan |
+| C | Pending / active / rotate plan (**hard rotate** current; soft-rotate prompts historical) |
 | D | Apply into live + V1 + V2 (atomic, idempotent) |
 | E | Worker gates (SMA, exit-only, equal cash) wired into cycles |
 | F | Rank CLI + email + Monday apply hook |
@@ -660,7 +659,7 @@ OVH
 
 A1 paths · A2 normalize · A3 windows · A4 fee sim · A5 one-symbol rank · A6 select · A7 fail%  
 B1 Wikipedia cache · B2 bar protocol+fixture · B3 fetch-all retry/skip  
-C1 pending · C2 soft-rotate diff · C3 active store  
+C1 pending · C2 rotate diff (hard) · C3 active store (`rotation_phase`)  
 D1 apply live · D2 apply paper · D3 apply orchestrator  
 E1 SMA gate · E2 equal cash · E3 live_worker · E4 paper worker  
 F1 rank orchestration · F2 email · F3 CLI · F4 Monday hook  
@@ -906,7 +905,7 @@ Tests: round-trip; mark_applied; missing file.
 Wire: export pending helpers from app/picker/__init__.py; default path via PickerPaths.
 ```
 
-### Picker Prompt P12 — Soft-rotate plan (diff flags)
+### Picker Prompt P12 — Soft-rotate plan (diff flags) — SUPERSEDED by hard rotate (`plan_hard_rotate`)
 
 ```text
 You are working in the Python repo autonomous-trade-alerts.

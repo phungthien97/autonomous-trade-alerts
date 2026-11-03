@@ -331,8 +331,8 @@ def plan_rebalance_to_equal(
 ) -> RebalancePlanResult:
     """Whole-share orders so each symbol targets ``deployable / N``.
 
-    Deployable = ``budget_usd - exit_only_invested_usd`` so soft-rotate overlap
-    (drops still long) cannot push total invested above the wallet.
+    Deployable = ``budget_usd - exit_only_invested_usd`` so exit-only leftovers
+    (rare under hard rotate) cannot push total invested above the wallet.
 
     - Deployable 0 → sell all listed longs; no buys.
     - Overweight → SELL down toward target (never below 0).

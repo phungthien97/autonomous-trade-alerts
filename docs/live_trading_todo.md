@@ -103,13 +103,13 @@ Implement blueprint **Part II** prompts **P01–P22** in order. Spec: investigat
 | [x] | P09 | `HourlyBarProvider` + fixture + retries | `tests/test_picker_bars_provider.py` |
 | [x] | P10 | Batch fetch + abort if >30% fail | `tests/test_picker_fetch_universe.py` |
 
-### H3 — Pending / soft-rotate / active (P11–P13)
+### H3 — Pending / rotate / active (P11–P13)
 
 | Done | Prompt | Deliverable | Primary tests |
 |------|--------|-------------|----------------|
 | [x] | P11 | `pending_selection.json` store | `tests/test_picker_pending.py` |
-| [x] | P12 | Soft-rotate plan (exit_only / awaiting_first_buy) | `tests/test_picker_soft_rotate.py` |
-| [x] | P13 | `active_selection.json` store | `tests/test_picker_active.py` |
+| [x] | P12 | Rotate plan (legacy soft + **hard rotate**) | `tests/test_picker_soft_rotate.py`, `tests/test_picker_hard_rotate.py`, `tests/test_live_hard_rotate.py` |
+| [x] | P13 | `active_selection.json` store (`rotation_phase`) | `tests/test_picker_active.py` |
 
 ### H4 — Apply into live + V1 + V2 (P14–P16)
 
@@ -130,7 +130,7 @@ Implement blueprint **Part II** prompts **P01–P22** in order. Spec: investigat
 | [x] | P19 | Wire gates into `live_worker` | `tests/test_live_picker_gates.py` (or extend live worker tests) |
 | [x] | P20 | Wire exit_only / list into paper `worker` | `tests/test_worker_picker_flags.py` |
 
-**H5 acceptance:** exit_only blocks BUY; SMA gate fail-closed; mid-cycle re-opt still overwrites %; no forced Monday rebalance.
+**H5 acceptance:** exit_only blocks BUY; SMA gate fail-closed; mid-cycle re-opt still overwrites %; hard rotate flattens book before new buys (SMA20).
 
 ### H6 — Rank job, email, CLI, IBKR, ops, E2E (P21–P22)
 
@@ -168,7 +168,7 @@ Goal: one clean bot — **picker-driven universe**, **IBKR-first data**, **OVH-o
 - [x] Delete or archive root one-offs that are not part of the app (e.g. `walkforward_optimize.py` → `archive/one_offs/`)  
 - [x] Strip dashboard copy that still teaches **`ZSP.TO` / TSX** as current universe  
 - [x] Remove **fractional-by-default** live assumptions; whole shares only on IBKR API (R3)  
-- [x] Ensure no dual sizing paths that ignore `sleeve_buy_budget` / soft-rotate flags  
+- [x] Ensure no dual sizing paths that ignore `sleeve_buy_budget` / hard-rotate flatten gates  
 - [x] Drop unused imports, dead helpers, and commented-out Oracle/Always-Free deploy scraps in active scripts  
 
 ### I2 — Deploy / ops clutter
@@ -195,7 +195,7 @@ Goal: one clean bot — **picker-driven universe**, **IBKR-first data**, **OVH-o
 | [x] | J1 | Timer installed; forced dry-run **ok** (`run_id=20261018_002339`, selected FICO/COHR/GEN/AKAM/MOS, `pending_written=False`) |
 | [x] | J2 | Pending writes on; force run `20261018_151053`; **reselected Hybrid B** → P/FICO/HUM/AMGN/VLO (was edge-ranked FICO/COHR/GEN/SKYD/INTC) |
 | [ ] | J3 | Monday apply via `live_worker` (paper paths first if staging) |
-| [ ] | J4 | Confirm soft-rotate + SMA gate in RTH; equal cash as frees |
+| [ ] | J4 | Confirm **hard rotate** (flatten → SMA first buys) in RTH; equal cash after flat |
 | [ ] | J5 | Confirm mid-biweek V1/V2 re-opt still overwrites buy/sell % |
 | [ ] | J6 | Only then rely on picker for live sleeves (still behind G4/G5 money ladder) |
 

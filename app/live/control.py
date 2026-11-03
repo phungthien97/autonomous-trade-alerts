@@ -236,7 +236,7 @@ def _sma20_ok_map(
 
 
 def _exit_only_symbols(paths: LivePaths) -> set[str]:
-    """Symbols currently marked exit_only in active_selection (soft-rotate drops)."""
+    """Symbols currently marked exit_only in active_selection (rotate leftovers)."""
     picker_paths = PickerPaths(project_root=paths.project_root)
     active = load_active(picker_paths.active_selection_path)
     if active is None:

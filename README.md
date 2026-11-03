@@ -53,7 +53,7 @@ Add these repository secrets:
 - This app's paper workers send **alerts only**.
 - **Live mode can place real IBKR orders.** Read `docs/README.md` (index), then `docs/live_trading_blueprint.md` and `deploy/ibgateway/README.md` before enabling it. Modes are `sim` → `broker_paper` → `live_dry_run` → `live`. Live requires `LIVE_TRADING_CONFIRM=YES`. Live symbols come from the **S&P picker** (bootstrap list only until first Monday apply). IBKR equities are **whole shares only**.
 - Checklist: `docs/live_trading_todo.md`.
-- **S&P 500 auto picker** (biweekly rank → soft rotate into V1/V2/live): spec in `docs/live_trading_investigation.md` §12; TDD prompts in `docs/live_trading_blueprint.md` Part II; CLI `python -m app.picker_rank [--dry-run]`.
+- **S&P 500 auto picker** (biweekly rank → **hard rotate**: flatten book, then buy new slate into V1/V2/live): architecture in `docs/bot_architecture.md`; historical spec in `docs/live_trading_investigation.md` §12 (superseded rotate: soft → hard); CLI `python -m app.picker_rank [--dry-run]`.
 - **Remote portfolio viewer:** Streamlit on OVH via **Tailscale** (investigation §13 / blueprint Part III). Tabs Live / Paper / Picker; safe controls only. Do **not** log into IBKR just to check positions. Deploy: `deploy/ibgateway/streamlit-dashboard.service`.
 - OVH SSH / Gateway ops: `deploy/ibgateway/README.md` (keys stay under `~/.ssh`, not in git).
 - Historical paper V2 / newsletters / ZSP research: under `archive/` (see `docs/README.md`).

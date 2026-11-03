@@ -143,7 +143,7 @@ def apply_to_paper_version(
             assets_state[sym] = _default_state_row(seed)
         elif sym in pending_cash and float(assets_state[sym].get("shares") or 0.0) <= 0:
             assets_state[sym]["cash"] = pending_cash[sym]
-        # Persist soft-rotate flags beside strategy fields for the worker.
+        # Persist rotate flags beside strategy fields for the worker.
         assets_state[sym]["exit_only"] = bool(asset.get("exit_only", False))
         assets_state[sym]["awaiting_first_buy"] = bool(asset.get("awaiting_first_buy", False))
     state["assets"] = assets_state
