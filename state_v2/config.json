@@ -43,8 +43,8 @@
     },
     {
       "symbol": "GOOG",
-      "buy_rise_pct": 3.5,
-      "sell_drop_pct": 2.0,
+      "buy_rise_pct": 3.0,
+      "sell_drop_pct": 1.5,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true,
@@ -54,7 +54,7 @@
     {
       "symbol": "MSFT",
       "buy_rise_pct": 2.5,
-      "sell_drop_pct": 2.5,
+      "sell_drop_pct": 1.5,
       "x_days": 20,
       "reopt_days": 5,
       "enabled": true,
