@@ -57,3 +57,4 @@ Datetime,Action,Price,Shares_After,Cash_After,Portfolio_Value,buy_rise_pct,sell_
 2026-11-10T21:00:00+00:00,SELL,533.8,0.0,1065.044616724059,1065.044616724059,2.5,1.5,Price dropped from rolling peak threshold,MSFT
 2026-11-11T15:30:00+00:00,BUY,510.69989013671875,1.9549847964978362,0.0,998.4105207904004,4.0,2.0,Price rose from rolling trough threshold,SMH
 2026-11-11T22:00:00+00:00,SELL,494.6,0.0,966.9354803478299,966.9354803478299,4.0,2.0,Price dropped from rolling peak threshold,SMH
+2026-11-13T00:00:00+00:00,BUY,167.1392,5.683753573971711,0.0,949.9780253507726,4.5,2.5,Price rose from rolling trough threshold,NVDA
