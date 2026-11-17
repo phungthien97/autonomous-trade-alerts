@@ -249,6 +249,11 @@ Implement blueprint **Part III** prompts **D01–D08**. Spec: investigation §13
 
 ---
 
+## Benchmark follow-up — Dec 14, 2026
+
+- [ ] Review the Nov 14–Dec 14 `broker_paper` benchmark: fills, reconciliation, risk controls, NAV, and dashboard accuracy. Advance to the next testing step only if no material issue remains.
+- [ ] Review an overlap-aware picker rotation: retain a ticker already held when it remains in the new selection; flatten only dropped tickers; apply first-buy gates only to genuinely new entries. Compare avoided turnover/costs with retained-position risk before implementation.
+
 ## Progress log
 
 | Date | Notes |
