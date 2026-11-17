@@ -98,7 +98,20 @@ def execute_intent(
             audit.append("cancel", {"order_id": result.order_id})
     elif result.status == "filled":
         audit.append("fill", {"order_id": result.order_id, "filled_qty": result.filled_qty, "avg_price": result.avg_price})
-    idempotency.mark_done(key, {"order_id": result.order_id, "status": result.status})
+    elif result.status in {"cancelled", "rejected"}:
+        audit.append(
+            "order_failed",
+            {
+                "order_id": result.order_id,
+                "status": result.status,
+                "symbol": live_intent.symbol,
+                "side": live_intent.side,
+            },
+        )
+    # Only pin the bar once shares actually moved (or dry-run). Marking
+    # ``submitted``/``cancelled`` blocked same-bar retries while NCLH stayed long.
+    if result.status in {"filled", "partial", "dry_run"}:
+        idempotency.mark_done(key, {"order_id": result.order_id, "status": result.status})
     return ExecuteResult(result.status, result.order_id)
 
 

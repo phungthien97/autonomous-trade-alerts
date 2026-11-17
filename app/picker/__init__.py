@@ -14,7 +14,6 @@ from app.picker.active import (
 )
 from app.picker.apply import ApplyResult, apply_pending_selection, maybe_apply_pending
 from app.picker.apply_live import apply_to_live_config
-from app.picker.apply_paper import apply_to_paper_v1, apply_to_paper_v2
 from app.picker.bars import (
     FixtureBarProvider,
     HourlyBarProvider,
@@ -91,8 +90,6 @@ __all__ = [
     "allow_first_buy",
     "apply_pending_selection",
     "apply_to_live_config",
-    "apply_to_paper_v1",
-    "apply_to_paper_v2",
     "clear_awaiting_first_buy",
     "clear_exit_only_if_flat",
     "prune_exit_only_if_flat",

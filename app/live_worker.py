@@ -29,7 +29,7 @@ from app.live.planner import plan_from_signal
 from app.live.queue import PendingIntent, PendingIntentStore
 from app.live.reconcile import LocalSleeveState, reconcile
 from app.live.session import is_us_equity_rth
-from app.paths import LivePaths, PickerPaths, StatePaths
+from app.paths import LivePaths, PickerPaths
 from app.picker.active import (
     ROTATION_IDLE,
     clear_awaiting_first_buy,
@@ -211,8 +211,6 @@ def run_live_once(
     apply_result = maybe_apply_pending(
         picker_paths,
         paths,
-        StatePaths(version="v1", project_root=paths.project_root),
-        StatePaths(version="v2", project_root=paths.project_root),
         now_utc,
         rth_ok=rth_ok,
     )
@@ -698,7 +696,9 @@ def run_live_once(
             )
             exec_status = result.status
             actions.append(f"{symbol}:{result.status}")
-            if result.status in {"filled", "partial", "submitted"}:
+            if result.status in {"filled", "partial", "submitted", "cancelled"}:
+                # Cancelled still hit the wire (wait-timeout cancel). Count it so
+                # a stuck flatten cannot spam IBKR every 5m without bound.
                 raw["orders_today"] = int(raw.get("orders_today", 0)) + 1
                 by_sym = raw.setdefault("orders_today_by_symbol", {})
                 if not isinstance(by_sym, dict):
@@ -789,9 +789,10 @@ def run_live_once(
                 )
             filled = result.status == "filled"
             snapshot = broker.get_account_snapshot()
-            # SELL submit must arm exit_pending even when IB returns submitted not filled,
-            # otherwise the next hourly bar can sell the same long again and go short.
-            if intent.side == "SELL" and result.status in {"submitted", "filled", "partial"}:
+            # Arm exit_pending only when shares actually moved. Arming on bare
+            # ``submitted`` zeroed local shares while IBKR cancelled the DAY
+            # order on oneshot disconnect (Nov 3 NCLH stuck long).
+            if intent.side == "SELL" and result.status in {"filled", "partial"}:
                 exit_pending = True
             # Reserve this sleeve in the equal-split denominator as soon as a BUY
             # is live at the broker. Waiting for fill + awaiting_first_buy clear

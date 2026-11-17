@@ -3,7 +3,7 @@
 **Status:** v4 — live 01–25 + picker **P01–P22** + **remote dashboard Part III (D01–D08)** (2026-10-17)  
 **Decisions:** `docs/live_trading_investigation.md` (§12 picker · **§13 remote viewer**)  
 **Tracking:** `docs/live_trading_todo.md`  
-**Repo:** `autonomous-trade-alerts` (extend in place; keep paper V1/V2)
+**Repo:** `autonomous-trade-alerts`. **Historical note (2026-11-16):** Paper V1/V2 were retired; this document preserves their original implementation plan.
 
 Not legal/tax advice.
 

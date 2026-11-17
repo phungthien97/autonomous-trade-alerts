@@ -1,6 +1,6 @@
 """Remote portfolio dashboard (Tailscale / OVH).
 
-Shows only Live | Paper V1 | Paper V2 | Picker per investigation §13.
+Shows only the active IBKR paper/live book and picker.
 Lab / Streamlit-Cloud config UI was removed from this entrypoint.
 """
 
@@ -17,7 +17,6 @@ if str(ROOT) not in sys.path:
 
 from app.remote.ui import (  # noqa: E402
     render_live_tab,
-    render_paper_tab,
     render_picker_tab,
 )
 
@@ -28,7 +27,7 @@ def _inject_styles() -> None:
         <style>
         .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 960px; }
         h1 { font-size: 1.6rem !important; margin-bottom: 0.25rem !important; }
-        /* Shared section rhythm across Live / Paper / Picker */
+        /* Shared section rhythm across Live / Picker */
         h3 { font-size: 1.05rem !important; margin-top: 0.85rem !important; margin-bottom: 0.35rem !important; }
         div[data-testid="stMetricValue"] { font-size: 1.15rem; }
         div[data-testid="stHorizontalBlock"] > div:first-child div[data-testid="stMetricValue"] {
@@ -53,14 +52,10 @@ def main() -> None:
     st.title("Trade bot")
     st.caption("OVH · Tailscale only · no IBKR login needed")
 
-    live_tab, v1_tab, v2_tab, picker_tab = st.tabs(["Live", "Paper V1", "Paper V2", "Picker"])
+    live_tab, picker_tab = st.tabs(["Live", "Picker"])
 
     with live_tab:
         render_live_tab(st, project_root=ROOT)
-    with v1_tab:
-        render_paper_tab(st, "v1", project_root=ROOT)
-    with v2_tab:
-        render_paper_tab(st, "v2", project_root=ROOT)
     with picker_tab:
         render_picker_tab(st, project_root=ROOT)
 

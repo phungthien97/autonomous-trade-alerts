@@ -1,6 +1,6 @@
 # IB Gateway — setup & remake guide
 
-This host runs paper V1/V2 and the live variant together. The Gateway API must stay on **localhost** only.
+This host runs the IBKR broker-paper/live worker and picker. The Gateway API must stay on **localhost** only. Paper V1/V2 were retired on 2026-11-16.
 
 **Primary host (2026-10):** OVHcloud VPS (Canada). Oracle Always Free was abandoned after repeated Ampere out-of-capacity failures.
 

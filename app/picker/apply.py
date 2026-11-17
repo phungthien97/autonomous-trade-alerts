@@ -1,4 +1,4 @@
-"""Monday apply orchestrator: pending → live + V1 + V2 + active (hard rotate)."""
+"""Monday apply orchestrator: pending → live + active (hard rotate)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.live.config import load_live_config
-from app.paths import LivePaths, PickerPaths, StatePaths
+from app.paths import LivePaths, PickerPaths
 from app.picker.active import (
     ROTATION_FLATTENING,
     ActiveSelection,
@@ -15,7 +15,6 @@ from app.picker.active import (
     save_active,
 )
 from app.picker.apply_live import apply_allocated_cash_to_live_state, apply_to_live_config
-from app.picker.apply_paper import apply_to_paper_v1, apply_to_paper_v2
 from app.picker.hard_rotate import plan_hard_rotate
 from app.picker.pending import load_pending, mark_applied
 
@@ -40,8 +39,6 @@ def pending_is_stale(computed_at: str, now: datetime, max_age_days: int = 3) -> 
 def maybe_apply_pending(
     picker_paths: PickerPaths,
     live_paths: LivePaths,
-    v1_paths: StatePaths,
-    v2_paths: StatePaths,
     now: datetime,
     *,
     rth_ok: bool,
@@ -68,19 +65,17 @@ def maybe_apply_pending(
         if pending_is_stale(pending.computed_at, now):
             reason = "stale_pending_outside_rth"
         return ApplyResult(applied=False, reason=reason, run_id=pending.run_id)
-    return apply_pending_selection(picker_paths, live_paths, v1_paths, v2_paths, now=now)
+    return apply_pending_selection(picker_paths, live_paths, now=now)
 
 
 def apply_pending_selection(
     picker_paths: PickerPaths,
     live_paths: LivePaths,
-    v1_paths: StatePaths,
-    v2_paths: StatePaths,
     now: datetime | None = None,
 ) -> ApplyResult:
     """Apply pending selection via hard rotate; idempotent on status.
 
-    Writes live/V1/V2 first, then active store (``rotation_phase=flattening``),
+    Writes live first, then active store (``rotation_phase=flattening``),
     then marks pending applied. Worker force-sells the bot book before any new buys.
     """
     pending = load_pending(picker_paths.pending_selection_path)
@@ -121,21 +116,6 @@ def apply_pending_selection(
         pending.symbols,
         equal_fallback_total=live_total,
     )
-    apply_to_paper_v1(
-        v1_paths.config_path,
-        v1_paths.state_path,
-        pending.symbols,
-        exit_only_symbols=plan.dropped,
-        awaiting_first_buy=awaiting_symbols,
-    )
-    apply_to_paper_v2(
-        v2_paths.config_path,
-        v2_paths.state_path,
-        pending.symbols,
-        exit_only_symbols=plan.dropped,
-        awaiting_first_buy=awaiting_symbols,
-    )
-
     active_rows: list[ActiveSymbol] = []
     pending_by_symbol = {s.symbol: s for s in pending.symbols}
     for symbol in pending_symbols:

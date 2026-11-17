@@ -101,19 +101,61 @@ class IbkrBroker:
     def supports_fractional(self, symbol: str) -> bool:
         return symbol in self.fractional_symbols
 
-    def place_market_order(self, symbol: str, side: str, quantity: float, dry_run: bool | None = None) -> OrderResult:
+    def place_market_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        dry_run: bool | None = None,
+        *,
+        wait_timeout_sec: float = 45.0,
+        poll_sec: float = 0.25,
+    ) -> OrderResult:
+        """Place a DAY RTH market order and wait for a terminal status.
+
+        IBKR often returns ``Submitted`` immediately. The live worker is a
+        oneshot that ``disconnect()``s at end of cycle; unfilled DAY orders are
+        then cancelled by the gateway. Waiting here is what lets liquid sells
+        (and slower names like a large NCLH lot) actually fill before teardown.
+        """
         is_dry = self.dry_run if dry_run is None else dry_run
         contract, order = _market_order(symbol, side, quantity)
         if is_dry:
             return OrderResult(order_id="dry", status="dry_run", filled_qty=0.0, avg_price=0.0, remaining_qty=0.0)
+        qualify = getattr(self.ib, "qualifyContracts", None)
+        if callable(qualify):
+            qualified = qualify(contract)
+            if not qualified:
+                return OrderResult(
+                    order_id="",
+                    status="rejected",
+                    filled_qty=0.0,
+                    avg_price=0.0,
+                    remaining_qty=float(quantity),
+                )
+            contract = qualified[0]
         trade = self.ib.placeOrder(contract, order)
-        status_obj = trade.orderStatus
-        status = str(getattr(status_obj, "status", "submitted")).lower()
-        filled = float(getattr(status_obj, "filled", 0.0) or 0.0)
-        remaining = float(getattr(status_obj, "remaining", 0.0) or 0.0)
-        avg = float(getattr(status_obj, "avgFillPrice", 0.0) or 0.0)
         order_id = str(getattr(trade.order, "orderId", ""))
+        status_obj, status, filled, remaining, avg = _wait_order_terminal(
+            self.ib,
+            trade,
+            timeout_sec=float(wait_timeout_sec),
+            poll_sec=float(poll_sec),
+        )
         mapped = _map_status(status, filled, remaining)
+        if mapped == "submitted":
+            # Still working after timeout — cancel so disconnect cannot leave a
+            # zombie, and surface cancelled so callers do not mark idempotent.
+            self.cancel_order(order_id)
+            status_obj, status, filled, remaining, avg = _wait_order_terminal(
+                self.ib,
+                trade,
+                timeout_sec=min(5.0, float(wait_timeout_sec)),
+                poll_sec=float(poll_sec),
+            )
+            mapped = _map_status(status, filled, remaining)
+            if mapped == "submitted":
+                mapped = "cancelled"
         if mapped == "partial" and remaining > 0:
             self.cancel_order(order_id)
             remaining = 0.0
@@ -301,6 +343,46 @@ def _market_order(symbol: str, side: str, quantity: float):
     order = MarketOrder(side, quantity, tif="DAY")
     order.outsideRth = False
     return _stock_contract(symbol), order
+
+
+_TERMINAL_ORDER_STATUSES = frozenset(
+    {
+        "filled",
+        "cancelled",
+        "apicancelled",
+        "inactive",
+        "rejected",
+    }
+)
+
+
+def _order_snapshot(trade) -> tuple[object, str, float, float, float]:
+    status_obj = trade.orderStatus
+    status = str(getattr(status_obj, "status", "submitted") or "submitted").lower()
+    filled = float(getattr(status_obj, "filled", 0.0) or 0.0)
+    remaining = float(getattr(status_obj, "remaining", 0.0) or 0.0)
+    avg = float(getattr(status_obj, "avgFillPrice", 0.0) or 0.0)
+    return status_obj, status, filled, remaining, avg
+
+
+def _wait_order_terminal(ib, trade, *, timeout_sec: float, poll_sec: float):
+    """Poll until IB reports a terminal status or timeout."""
+    import time
+
+    deadline = time.monotonic() + max(0.0, float(timeout_sec))
+    status_obj, status, filled, remaining, avg = _order_snapshot(trade)
+    while time.monotonic() < deadline:
+        status_obj, status, filled, remaining, avg = _order_snapshot(trade)
+        if status in _TERMINAL_ORDER_STATUSES:
+            break
+        if filled > 0 and remaining <= 1e-9:
+            break
+        sleeper = getattr(ib, "sleep", None)
+        if callable(sleeper):
+            sleeper(max(0.01, float(poll_sec)))
+        else:
+            time.sleep(max(0.01, float(poll_sec)))
+    return _order_snapshot(trade)
 
 
 def _map_status(status: str, filled: float, remaining: float) -> str:

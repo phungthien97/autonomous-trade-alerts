@@ -1,5 +1,7 @@
 # How the bot works
 
+> **Current scope (2026-11-16):** the legacy file-sim Paper V1/V2 workers were retired. The active bot is the IBKR broker-paper/live worker plus the S&P picker; V1/V2 references below are historical.
+
 A map of the whole system: what runs where, how a trade decision is made, and how the S&P picker feeds sleeves into live + paper.
 
 **Audience:** you (operator), not an implementer checklist.  
