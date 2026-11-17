@@ -44,7 +44,7 @@ python scripts/check_live_imports.py
 | [x] | G1 | Paper API **4002** (`DUR235447`); smoke OK |
 | [x] | G1b | systemd xvfb/ibgateway; AutoRestart; 2FA relogin |
 | [x] | G2 | Email alerts; CAD/BASE snapshot; health timers |
-| [~] | G3 | `broker_paper` since **2026-10-05**; soak through **2026-10-19** RTH; checklist below |
+| [~] | G3 | `broker_paper` benchmark restarted **2026-11-14**; complete the Dec 14 review before considering G4 |
 | [ ] | G4 | Fund ~$1k USD taxable; `live_dry_run` several sessions |
 | [ ] | G5 | Go-ahead; `LIVE_TRADING_CONFIRM=YES`; mode `live` |
 | [ ] | G6 | Week-1 monitor; reconcile fees vs Flex |
@@ -69,11 +69,7 @@ Evidence from OVH review **2026-10-17** (paper `DUR235447`, mode `broker_paper`)
 
 **Blocker found + fixed (2026-10-17):** sleeve cash was **$333.33** (`total_cash` 1000 ÷ 3) while MSFT/AAPL/SMH are >$330, so whole-share qty was always **0** (`zero quantity`) for ~12 days — **zero fills, empty audit**. OVH patched: `total_cash=3000`, per-sleeve cash `$1000`, `allow_fractional_default=false`. Immediate cycle → **`AAPL:queued`** (outside RTH). Local planner also fixed so `buy_cash_cap` is not clamped by stale sleeve cash (deploy with next sync).
 
-**Monday 2026-10-19 RTH plan:**
-
-1. Confirm `AAPL` BUY submits/fills (or re-plans in RTH); audit `order_submitted`/`fill`.  
-2. After fill, force or wait for a SELL (tighten `sell_drop_pct` temporarily if needed).  
-3. Re-run checklist; only then mark G3 `[x]`. Do **not** start G4 early.
+**Current G3 gate:** the historical fill/SELL evidence is satisfied, but the active broker-paper benchmark runs from Nov 14 through Dec 14, 2026. Do **not** start G4 before that review.
 
 ---
 
@@ -194,10 +190,10 @@ Goal: one clean bot — **picker-driven universe**, **IBKR-first data**, **OVH-o
 |------|------|--------|
 | [x] | J1 | Timer installed; forced dry-run **ok** (`run_id=20261018_002339`, selected FICO/COHR/GEN/AKAM/MOS, `pending_written=False`) |
 | [x] | J2 | Pending writes on; force run `20261018_151053`; **reselected Hybrid B** → P/FICO/HUM/AMGN/VLO (was edge-ranked FICO/COHR/GEN/SKYD/INTC) |
-| [ ] | J3 | Monday apply via `live_worker` (paper paths first if staging) |
-| [ ] | J4 | Confirm **hard rotate** (flatten → SMA first buys) in RTH; equal cash after flat |
-| [ ] | J5 | Confirm mid-biweek V1/V2 re-opt still overwrites buy/sell % |
-| [ ] | J6 | Only then rely on picker for live sleeves (still behind G4/G5 money ladder) |
+| [x] | J3 | Monday apply via `live_worker`: confirmed Nov 16, 2026 for MRNA/REGN/CSGP/LMT/WM |
+| [x] | J4 | Hard rotate confirmed in RTH: old sleeves flattened; new sleeves use first-buy gates |
+| N/A | J5 | Retired with Paper V1/V2 |
+| [x] | J6 | Picker is the source of broker-paper sleeves; G4/G5 remain blocked by G3 benchmark |
 
 ---
 
@@ -210,16 +206,16 @@ Implement blueprint **Part III** prompts **D01–D08**. Spec: investigation §13
 
 | Done | Prompt | Deliverable | Primary tests |
 |------|--------|-------------|----------------|
-| [x] | D01 | Live/paper/picker status loaders | `tests/test_remote_status.py` |
+| [x] | D01 | Live/picker status loaders | `tests/test_remote_status.py` |
 | [x] | D02 | Health strip helpers | `tests/test_remote_health.py` |
 | [x] | D03 | Live tab UI (health → positions) | `app/remote/ui.py` + dashboard tabs |
-| [x] | D04 | Paper V1 / V2 tabs | dashboard + loaders |
+| N/A | D04 | Retired with Paper V1 / V2 |
 | [x] | D05 | Picker tab | dashboard + ranking meta |
 | [x] | D06 | Safe controls only (no mode change) | `tests/test_remote_controls_scope.py` |
 | [x] | D07 | IBKR marks via client id **9** | `tests/test_remote_marks.py` |
 | [x] | D08 | systemd unit + Tailscale deploy docs | `streamlit-dashboard.service` + README |
 
-**K1 acceptance:** tabs Live | Paper V1 | Paper V2 | Picker; health first; manual refresh; safe controls only; pytest green.
+**K1 acceptance:** tabs Live | Picker; health first; manual refresh; safe controls only; pytest green.
 
 ### K2 — OVH ops
 
@@ -229,7 +225,7 @@ Implement blueprint **Part III** prompts **D01–D08**. Spec: investigation §13
 - [x] Confirm marks path uses client id 9 (no clash with worker=1 / picker=7) — `DASHBOARD_IB_CLIENT_ID=9`; Refresh shows `marks=ibkr` + IBKR equity
 - [x] Confirm enable/disable + ack work from phone without SSH — Disable→OFF, Enable→ON, Ack cleared seeded incident (2026-10-18)
 
-**K acceptance:** can view live/paper/picker and use safe controls from phone over Tailscale without logging into IBKR. **DONE.**
+**K acceptance:** can view live/picker and use safe controls from phone over Tailscale without logging into IBKR. **DONE.**
 
 ---
 
